@@ -1,0 +1,8 @@
+pandas
+openpyxl
+numpy
+torch
+sentence-transformers
+scikit-learn
+tqdm
+joblib
