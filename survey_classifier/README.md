@@ -191,17 +191,64 @@ python scripts/predict_excel.py \
 
 ## Визуализация index
 
-После построения index можно сохранить 2D-проекцию embeddings исторических ответов:
+После построения index можно сохранить 2D-проекцию embeddings исторических ответов или центроидов:
 
 ```bash
 python -m src.visualize \
   --model-dir model_out \
   --output-dir model_out/reports \
+  --target examples \
   --method pca \
   --color-by code \
   --sample-size 5000 \
   --seed 42
 ```
+
+`--target` определяет, какие точки рисовать:
+
+- `examples` - все исторические ответы из `example_embeddings.npy`;
+- `subcategory-centroids` - только центроиды подкатегорий из `subcategory_centroids.npy`;
+- `parent-centroids` - только центроиды основных/родительских категорий из `parent_centroids.npy`.
+
+Примеры:
+
+```bash
+# Все ответы, раскраска по подкатегории
+python -m src.visualize \
+  --model-dir model_out \
+  --target examples \
+  --color-by code
+
+# Все ответы, раскраска по основной категории
+python -m src.visualize \
+  --model-dir model_out \
+  --target examples \
+  --color-by parent_code
+
+# Только центроиды подкатегорий
+python -m src.visualize \
+  --model-dir model_out \
+  --target subcategory-centroids \
+  --color-by parent_code
+
+# Только центроиды основных категорий
+python -m src.visualize \
+  --model-dir model_out \
+  --target parent-centroids \
+  --color-by code
+```
+
+Отдельный режим single-label:
+
+```bash
+python -m src.visualize \
+  --model-dir model_out \
+  --target examples \
+  --single-label-only \
+  --color-by code
+```
+
+В этом режиме используются только ответы, у которых в колонке `codes` ровно один код. Для `subcategory-centroids` и `parent-centroids` центроиды пересчитываются заново только по таким single-label сэмплам.
 
 Также доступен script wrapper:
 
@@ -214,8 +261,10 @@ python scripts/visualize_index.py \
 
 Артефакты:
 
-- `model_out/reports/embedding_projection.csv` - координаты `x`, `y` и metadata строк;
-- `model_out/reports/embedding_projection.html` - standalone SVG scatter plot, раскрашенный по `code`, `parent_code` или другой колонке metadata.
+- `model_out/reports/embedding_projection_<target>_<method>.csv` - координаты `x`, `y` и metadata строк;
+- `model_out/reports/embedding_projection_<target>_<method>.html` - standalone SVG scatter plot, раскрашенный по `code`, `parent_code` или другой колонке metadata.
+
+Если указан `--single-label-only`, к имени файла добавляется суффикс `_single_label`.
 
 ## Python API
 
