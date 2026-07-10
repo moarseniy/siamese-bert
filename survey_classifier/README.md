@@ -39,25 +39,71 @@ python scripts/train_pipeline.py \
   --train-xlsx train.xlsx \
   --codebook-txt codes.txt \
   --out-dir model_out \
+  --training-mode contrastive \
   --epochs 1 \
   --batch-size 16 \
+  --val-size 0.1 \
+  --test-size 0.1 \
+  --seed 42 \
   --min-class-size 10 \
-  --max-pairs-per-code 5000
+  --max-pairs-per-code 5000 \
+  --negative-ratio 1.0
 ```
 
 Pipeline делает три шага:
 
 1. Загружает Excel и TXT-справочник, разворачивает multi-label ответы в long-format.
-2. Дообучает siamese/bi-encoder модель на positive pairs: два разных ответа с одной общей подкатегорией.
-3. Строит production index: embeddings исторических ответов, metadata, центроиды подкатегорий, центроиды родительских категорий и codebook.
+2. Делит данные на `train` / `val` / `test` по `row_id`, чтобы строки одного multi-label ответа не попадали в разные split. По умолчанию используется `seed=42`.
+3. Дообучает siamese/bi-encoder модель выбранным режимом обучения.
+4. Строит production index: embeddings исторических ответов, metadata, центроиды подкатегорий, центроиды родительских категорий и codebook.
+
+По умолчанию `--index-split train`, то есть index строится только на train split без leakage из val/test. Для финального production-переобучения можно указать `--index-split all`.
+
+## Режимы обучения
+
+`--training-mode contrastive` - режим по умолчанию. Генерирует positive pairs внутри одного кода и explicit negative pairs из ответов, где этого кода нет. Используется `CosineSimilarityLoss` с label `1.0` для positive и `0.0` для negative. Размер негативов регулируется:
+
+```bash
+--negative-ratio 1.0
+--max-negatives-per-code 5000
+```
+
+`--training-mode mnrl` - прежний режим на positive pairs с `MultipleNegativesRankingLoss`. Явных негативных строк нет, но остальные элементы batch работают как in-batch negatives.
+
+```bash
+python scripts/train_pipeline.py \
+  --train-xlsx train.xlsx \
+  --codebook-txt codes.txt \
+  --out-dir model_out \
+  --training-mode mnrl
+```
+
+`--training-mode triplet` - triplet learning: `anchor`, `positive` из того же кода, `negative` из ответа без этого кода. Используется `TripletLoss` с cosine distance.
+
+```bash
+python scripts/train_pipeline.py \
+  --train-xlsx train.xlsx \
+  --codebook-txt codes.txt \
+  --out-dir model_out \
+  --training-mode triplet \
+  --max-triplets-per-code 5000 \
+  --triplet-margin 0.5
+```
 
 Итоговая структура:
 
 ```text
 model_out/
   model/
+  splits/
+    train.csv
+    val.csv
+    test.csv
+    split_assignments.csv
+    split_summary.json
   train_config.json
-  training_pairs.csv
+  training_pairs.csv      # для mnrl/contrastive
+  training_triplets.csv   # для triplet
   index/
     example_embeddings.npy
     example_metadata.csv
@@ -70,6 +116,8 @@ model_out/
 ```
 
 Все CSV сохраняются в `utf-8-sig`.
+
+`val.csv` и `test.csv` пока сохраняются как holdout-наборы для проверки качества и подбора порогов. Само вычисление метрик можно добавить отдельным `eval`-инструментом поверх этих файлов и готового index.
 
 ## Только построить индекс
 
@@ -140,6 +188,34 @@ python scripts/predict_excel.py \
 - не найдено ни одной реальной категории выше порога.
 
 `confidence` - similarity лучшего кандидата. Для multi-label ответа возвращаются все кандидаты из `top_k`, у которых similarity не ниже `threshold`.
+
+## Визуализация index
+
+После построения index можно сохранить 2D-проекцию embeddings исторических ответов:
+
+```bash
+python -m src.visualize \
+  --model-dir model_out \
+  --output-dir model_out/reports \
+  --method pca \
+  --color-by code \
+  --sample-size 5000 \
+  --seed 42
+```
+
+Также доступен script wrapper:
+
+```bash
+python scripts/visualize_index.py \
+  --model-dir model_out \
+  --method tsne \
+  --color-by parent_code
+```
+
+Артефакты:
+
+- `model_out/reports/embedding_projection.csv` - координаты `x`, `y` и metadata строк;
+- `model_out/reports/embedding_projection.html` - standalone SVG scatter plot, раскрашенный по `code`, `parent_code` или другой колонке metadata.
 
 ## Python API
 
