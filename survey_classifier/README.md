@@ -153,6 +153,51 @@ model_out/
 
 `val.csv` и `test.csv` пока сохраняются как holdout-наборы для проверки качества и подбора порогов. Само вычисление метрик можно добавить отдельным `eval`-инструментом поверх этих файлов и готового index.
 
+## Быстрый TF-IDF baseline
+
+TF-IDF baseline не использует GPU и не связан с FRIDA/BGE index. Он объединяет
+словные n-граммы `1-2` и символьные n-граммы `3-5`, после чего обучает
+multi-label One-vs-Rest Logistic Regression. Символьные признаки полезны для
+коротких русских ответов, словоформ и опечаток.
+
+Обучение:
+
+```bash
+python scripts/train_tfidf.py \
+  --train-xlsx train.xlsx \
+  --codebook-txt codes.txt \
+  --out-dir tfidf_out \
+  --val-size 0.1 \
+  --test-size 0.1 \
+  --seed 42 \
+  --threshold-metric micro_f1
+```
+
+Порог автоматически подбирается на `val`, затем с ним считаются финальные
+метрики на `test`. Основные результаты:
+
+- `tfidf_out/metrics_test.json` - общие `micro/macro F1`, precision, recall,
+  exact match, LRAP и top-1 accuracy на single-label строках;
+- `tfidf_out/metrics_test_per_class.csv` - метрики по каждому коду;
+- `tfidf_out/predictions_test.csv` - правильные и предсказанные коды;
+- `tfidf_out/threshold_search.csv` - результаты подбора порога;
+- `tfidf_out/tfidf_model.joblib` - сохранённая модель.
+
+Инференс нового Excel:
+
+```bash
+python scripts/predict_tfidf.py \
+  --model-dir tfidf_out \
+  --input-xlsx new_survey.xlsx \
+  --output-xlsx predictions_tfidf.xlsx \
+  --text-col "Ответ" \
+  --top-k 5
+```
+
+Без `--threshold` используется порог, выбранный на `val`. Его можно временно
+переопределить, например `--threshold 0.4`. Формат результата совпадает с
+основным predict, но `nearest_examples` для TF-IDF остаётся пустым.
+
 ## Только построить индекс
 
 Если модель уже обучена и лежит в `model_out/model`:
