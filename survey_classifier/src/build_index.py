@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 
 from .data_io import load_train_data, parse_codebook
-from .utils import ensure_dir, normalize_rows, utc_now_iso, write_json
+from .model_input import configure_model_input, prepare_model_texts
+from .utils import ensure_dir, normalize_rows, read_json, utc_now_iso, write_json
 
 
 def _model_path_for_config(model_dir: Path, out_dir: Path) -> str:
@@ -24,18 +25,35 @@ def _encode_texts(
     texts: list[str],
     batch_size: int = 64,
     show_progress_bar: bool = True,
-) -> np.ndarray:
+    prompt_name: str | None = None,
+    input_prefix: str | None = None,
+) -> tuple[np.ndarray, str]:
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(str(model_dir))
+    resolved_input_prefix = configure_model_input(
+        model=model,
+        prompt_name=prompt_name,
+        input_prefix=input_prefix,
+    )
     embeddings = model.encode(
-        texts,
+        prepare_model_texts(texts, input_prefix=resolved_input_prefix),
         batch_size=batch_size,
         convert_to_numpy=True,
         normalize_embeddings=True,
         show_progress_bar=show_progress_bar,
     )
-    return normalize_rows(np.asarray(embeddings, dtype=np.float32))
+    return normalize_rows(np.asarray(embeddings, dtype=np.float32)), resolved_input_prefix
+
+
+def _saved_training_input_config(output_dir: Path) -> tuple[str | None, str | None]:
+    config_path = output_dir / "train_config.json"
+    if not config_path.exists():
+        return None, None
+    config = read_json(config_path)
+    if "input_prefix" not in config:
+        return None, None
+    return config.get("prompt_name"), str(config.get("input_prefix", ""))
 
 
 def build_index(
@@ -44,6 +62,9 @@ def build_index(
     out_dir: str | Path,
     model_dir: str | Path | None = None,
     batch_size: int = 64,
+    prompt_name: str | None = None,
+    input_prefix: str | None = None,
+    prompt_name_for_config: str | None = None,
     show_progress_bar: bool = True,
 ) -> Path:
     required = {"row_id", "text", "codes", "code", "code_name", "parent_code", "parent_name"}
@@ -58,16 +79,25 @@ def build_index(
     if not resolved_model_dir.exists():
         raise FileNotFoundError(f"SentenceTransformer model directory not found: {resolved_model_dir}")
 
+    configured_prompt_name = prompt_name_for_config or prompt_name
+    if prompt_name is None and input_prefix is None:
+        saved_prompt_name, saved_input_prefix = _saved_training_input_config(output_dir)
+        if saved_input_prefix is not None:
+            input_prefix = saved_input_prefix
+            configured_prompt_name = saved_prompt_name
+
     index_dir = ensure_dir(output_dir / "index")
     metadata = train_df.reset_index(drop=True).copy()
     metadata.insert(0, "example_id", range(len(metadata)))
 
     texts = metadata["text"].astype(str).tolist()
-    example_embeddings = _encode_texts(
+    example_embeddings, resolved_input_prefix = _encode_texts(
         model_dir=resolved_model_dir,
         texts=texts,
         batch_size=batch_size,
         show_progress_bar=show_progress_bar,
+        prompt_name=prompt_name,
+        input_prefix=input_prefix,
     )
     np.save(index_dir / "example_embeddings.npy", example_embeddings.astype(np.float32))
     metadata.to_csv(index_dir / "example_metadata.csv", index=False, encoding="utf-8-sig")
@@ -128,6 +158,8 @@ def build_index(
     config = {
         "created_at": utc_now_iso(),
         "model_path": _model_path_for_config(resolved_model_dir, output_dir),
+        "prompt_name": configured_prompt_name,
+        "input_prefix": resolved_input_prefix,
         "embeddings_normalized": True,
         "embedding_dim": int(example_embeddings.shape[1]),
         "n_examples": int(len(metadata)),
@@ -145,6 +177,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--model-dir", type=Path, default=None)
     parser.add_argument("--batch-size", type=int, default=64)
+    prompt_group = parser.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt-name", default=None)
+    prompt_group.add_argument("--input-prefix", default=None)
     args = parser.parse_args(argv)
 
     train_df = load_train_data(args.train_xlsx, args.codebook_txt)
@@ -155,6 +190,8 @@ def main(argv: list[str] | None = None) -> None:
         out_dir=args.out_dir,
         model_dir=args.model_dir,
         batch_size=args.batch_size,
+        prompt_name=args.prompt_name,
+        input_prefix=args.input_prefix,
     )
 
 

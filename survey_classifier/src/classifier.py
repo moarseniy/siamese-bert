@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .data_io import UNKNOWN_CODE
+from .model_input import prepare_model_texts
 from .utils import compact_float, cosine_scores, normalize_rows, read_json
 
 
@@ -33,6 +34,7 @@ class SurveyClassifier:
     parent_metadata: pd.DataFrame
     codebook: pd.DataFrame
     config: dict[str, Any]
+    input_prefix: str = ""
 
     @classmethod
     def load(cls, model_dir: str | Path) -> "SurveyClassifier":
@@ -54,6 +56,9 @@ class SurveyClassifier:
         from sentence_transformers import SentenceTransformer
 
         model = SentenceTransformer(str(sentence_model_dir))
+        input_prefix = str(config.get("input_prefix", ""))
+        if "input_prefix" in config and hasattr(model, "default_prompt_name"):
+            model.default_prompt_name = None
         example_embeddings = normalize_rows(np.load(index_dir / "example_embeddings.npy"))
         subcategory_centroids = normalize_rows(np.load(index_dir / "subcategory_centroids.npy"))
         parent_centroids = normalize_rows(np.load(index_dir / "parent_centroids.npy"))
@@ -74,11 +79,12 @@ class SurveyClassifier:
             parent_metadata=pd.read_csv(index_dir / "parent_metadata.csv", dtype=str, keep_default_na=False),
             codebook=pd.read_csv(index_dir / "codebook.csv", dtype=str, keep_default_na=False),
             config=config,
+            input_prefix=input_prefix,
         )
 
     def _encode(self, texts: list[str], batch_size: int = 64) -> np.ndarray:
         embeddings = self.model.encode(
-            texts,
+            prepare_model_texts(texts, input_prefix=self.input_prefix),
             batch_size=batch_size,
             convert_to_numpy=True,
             normalize_embeddings=True,

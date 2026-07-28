@@ -15,6 +15,9 @@ pip install -r requirements.txt
 
 Базовая модель по умолчанию: `BAAI/bge-m3`.
 
+Для русскоязычных данных также поддерживается `ai-forever/FRIDA`. У этой модели
+для тематической группировки используется встроенный prompt `categorize_topic`.
+
 ## Формат данных
 
 Исторический Excel для обучения должен содержать:
@@ -50,7 +53,38 @@ python scripts/train_pipeline.py \
   --negative-ratio 1.0
 ```
 
-Pipeline делает три шага:
+Обучение FRIDA из Hugging Face:
+
+```bash
+python scripts/train_pipeline.py \
+  --train-xlsx train.xlsx \
+  --codebook-txt codes.txt \
+  --out-dir model_out_frida \
+  --base-model ai-forever/FRIDA \
+  --prompt-name categorize_topic \
+  --training-mode contrastive \
+  --epochs 1 \
+  --batch-size 8 \
+  --seed 42
+```
+
+Если модель уже скачана, вместо имени репозитория укажите локальную директорию:
+
+```bash
+--base-model /path/to/FRIDA
+```
+
+`--prompt-name categorize_topic` разрешается через встроенный словарь prompts
+модели. Полученный prefix сохраняется в `train_config.json` и
+`index/index_config.json`, поэтому автоматически и одинаково применяется при
+обучении, построении индекса и последующем инференсе. В `predict` повторно
+указывать prompt не нужно.
+
+Для модели без встроенного prompt можно передать собственную строку через
+`--input-prefix "categorize_topic: "`. Параметры `--prompt-name` и
+`--input-prefix` взаимоисключающие.
+
+Pipeline делает четыре шага:
 
 1. Загружает Excel и TXT-справочник, разворачивает multi-label ответы в long-format.
 2. Делит данные на `train` / `val` / `test` по `row_id`, чтобы строки одного multi-label ответа не попадали в разные split. По умолчанию используется `seed=42`.
@@ -280,6 +314,17 @@ python scripts/visualize_csv.py \
   --text-col "Ответ" \
   --codes-col "Коды_новые" \
   --color-by code
+```
+
+Для базовой FRIDA добавьте тот же prompt:
+
+```bash
+python scripts/visualize_csv.py \
+  --input-csv data/answers.csv \
+  --model-path /path/to/FRIDA \
+  --output-dir reports/frida \
+  --prompt-name categorize_topic \
+  --color-by parent_code
 ```
 
 CSV-разделитель определяется автоматически. При необходимости его можно задать

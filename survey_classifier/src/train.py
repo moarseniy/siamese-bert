@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 import pandas as pd
 
+from .model_input import configure_model_input, prepare_model_text
 from .utils import ensure_dir, set_global_seed, unique_preserve_order, utc_now_iso, write_json
 
 DEFAULT_BASE_MODEL = "BAAI/bge-m3"
@@ -205,6 +206,8 @@ def train_model(
     batch_size: int = 16,
     seed: int = 42,
     device: str | None = None,
+    prompt_name: str | None = None,
+    input_prefix: str | None = None,
     show_progress_bar: bool = True,
 ) -> Path:
     if training_mode not in ("mnrl", "contrastive", "triplet"):
@@ -228,6 +231,11 @@ def train_model(
     if device:
         model_kwargs["device"] = device
     model = SentenceTransformer(base_model, **model_kwargs)
+    resolved_input_prefix = configure_model_input(
+        model=model,
+        prompt_name=prompt_name,
+        input_prefix=input_prefix,
+    )
 
     pairs_df = pd.DataFrame()
     triplets_df = pd.DataFrame()
@@ -250,7 +258,13 @@ def train_model(
                 f"Top class sizes: {counts.head(20).to_dict()}"
             )
         train_examples = [
-            InputExample(texts=[row.anchor, row.positive, row.negative])
+            InputExample(
+                texts=[
+                    prepare_model_text(row.anchor, resolved_input_prefix),
+                    prepare_model_text(row.positive, resolved_input_prefix),
+                    prepare_model_text(row.negative, resolved_input_prefix),
+                ]
+            )
             for row in triplets_df.itertuples(index=False)
         ]
         train_loss = losses.TripletLoss(
@@ -282,13 +296,24 @@ def train_model(
         if training_mode == "mnrl":
             positive_pairs = pairs_df[pairs_df["sample_type"] == "positive"]
             train_examples = [
-                InputExample(texts=[row.text_a, row.text_b])
+                InputExample(
+                    texts=[
+                        prepare_model_text(row.text_a, resolved_input_prefix),
+                        prepare_model_text(row.text_b, resolved_input_prefix),
+                    ]
+                )
                 for row in positive_pairs.itertuples(index=False)
             ]
             train_loss = losses.MultipleNegativesRankingLoss(model)
         else:
             train_examples = [
-                InputExample(texts=[row.text_a, row.text_b], label=float(row.label))
+                InputExample(
+                    texts=[
+                        prepare_model_text(row.text_a, resolved_input_prefix),
+                        prepare_model_text(row.text_b, resolved_input_prefix),
+                    ],
+                    label=float(row.label),
+                )
                 for row in pairs_df.itertuples(index=False)
             ]
             train_loss = losses.CosineSimilarityLoss(model)
@@ -319,6 +344,8 @@ def train_model(
         "batch_size": batch_size,
         "seed": seed,
         "device": device,
+        "prompt_name": prompt_name,
+        "input_prefix": resolved_input_prefix,
         "n_training_rows": int(len(train_df)),
         "n_training_pairs": int(len(pairs_df)),
         "n_positive_pairs": n_positive_pairs,

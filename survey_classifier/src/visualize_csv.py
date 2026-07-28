@@ -14,6 +14,7 @@ from .data_io import (
     parse_codebook,
     split_codes,
 )
+from .model_input import configure_model_input, prepare_model_texts
 from .utils import ensure_dir
 from .visualize import build_projection_from_embeddings, save_projection_html
 
@@ -83,12 +84,19 @@ def encode_texts(
     texts: list[str],
     model_path: str | Path,
     batch_size: int = 32,
+    prompt_name: str | None = None,
+    input_prefix: str | None = None,
 ) -> np.ndarray:
     from sentence_transformers import SentenceTransformer
 
     model = SentenceTransformer(str(model_path))
+    resolved_input_prefix = configure_model_input(
+        model=model,
+        prompt_name=prompt_name,
+        input_prefix=input_prefix,
+    )
     embeddings = model.encode(
-        texts,
+        prepare_model_texts(texts, input_prefix=resolved_input_prefix),
         batch_size=batch_size,
         show_progress_bar=True,
         convert_to_numpy=True,
@@ -112,6 +120,8 @@ def visualize_csv(
     encoding: str = "utf-8-sig",
     sep: str | None = None,
     output_prefix: str | None = None,
+    prompt_name: str | None = None,
+    input_prefix: str | None = None,
 ) -> tuple[Path, Path]:
     metadata = load_single_label_csv(
         input_csv=input_csv,
@@ -125,6 +135,8 @@ def visualize_csv(
         metadata["text"].astype(str).tolist(),
         model_path=model_path,
         batch_size=batch_size,
+        prompt_name=prompt_name,
+        input_prefix=input_prefix,
     )
     projection = build_projection_from_embeddings(
         embeddings=embeddings,
@@ -166,6 +178,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--sample-size", type=int, default=5000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=32)
+    prompt_group = parser.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt-name", default=None)
+    prompt_group.add_argument("--input-prefix", default=None)
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument(
         "--sep",
@@ -190,6 +205,8 @@ def main(argv: list[str] | None = None) -> None:
         encoding=args.encoding,
         sep=args.sep,
         output_prefix=args.output_prefix,
+        prompt_name=args.prompt_name,
+        input_prefix=args.input_prefix,
     )
     print(f"Saved projection CSV to {csv_path}")
     print(f"Saved projection HTML to {html_path}")

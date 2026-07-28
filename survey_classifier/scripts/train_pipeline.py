@@ -12,6 +12,7 @@ from src.build_index import build_index
 from src.data_io import load_train_data, parse_codebook
 from src.split import save_splits, split_train_val_test
 from src.train import DEFAULT_BASE_MODEL, train_model
+from src.utils import read_json
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -35,6 +36,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--index-split", choices=["train", "all"], default="train")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", default=None)
+    prompt_group = parser.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt-name", default=None)
+    prompt_group.add_argument("--input-prefix", default=None)
     args = parser.parse_args(argv)
 
     print("Loading training data...")
@@ -74,9 +78,12 @@ def main(argv: list[str] | None = None) -> None:
         batch_size=args.batch_size,
         seed=args.seed,
         device=args.device,
+        prompt_name=args.prompt_name,
+        input_prefix=args.input_prefix,
     )
 
     print("Building production index...")
+    train_config = read_json(args.out_dir / "train_config.json")
     index_df = train_df if args.index_split == "all" else splits["train"]
     index_dir = build_index(
         train_df=index_df,
@@ -84,6 +91,8 @@ def main(argv: list[str] | None = None) -> None:
         out_dir=args.out_dir,
         model_dir=model_dir,
         batch_size=args.encode_batch_size,
+        input_prefix=str(train_config.get("input_prefix", "")),
+        prompt_name_for_config=train_config.get("prompt_name"),
     )
     print(f"Done. Model: {model_dir}. Index: {index_dir}.")
 
