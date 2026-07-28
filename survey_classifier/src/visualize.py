@@ -197,6 +197,32 @@ def _project_embeddings(
     raise ValueError("method must be one of: pca, tsne.")
 
 
+def build_projection_from_embeddings(
+    embeddings: np.ndarray,
+    metadata: pd.DataFrame,
+    method: str = "pca",
+    sample_size: int | None = 5000,
+    seed: int = 42,
+) -> pd.DataFrame:
+    if len(embeddings) != len(metadata):
+        raise ValueError(
+            "Number of embeddings does not match metadata rows: "
+            f"embeddings={len(embeddings)}, metadata={len(metadata)}"
+        )
+
+    sampled_embeddings, sampled_metadata = _sample(
+        embeddings,
+        metadata,
+        sample_size=sample_size,
+        seed=seed,
+    )
+    points = _project_embeddings(sampled_embeddings, method=method, seed=seed)
+    projection = sampled_metadata.copy()
+    projection.insert(0, "x", points[:, 0])
+    projection.insert(1, "y", points[:, 1])
+    return projection
+
+
 def build_projection(
     model_dir: str | Path,
     method: str = "pca",
@@ -225,11 +251,13 @@ def build_projection(
     else:
         raise ValueError("target must be one of: examples, subcategory-centroids, parent-centroids.")
 
-    points = _project_embeddings(sampled_embeddings, method=method, seed=seed)
-    projection = sampled_metadata.copy()
-    projection.insert(0, "x", points[:, 0])
-    projection.insert(1, "y", points[:, 1])
-    return projection
+    return build_projection_from_embeddings(
+        embeddings=sampled_embeddings,
+        metadata=sampled_metadata,
+        method=method,
+        sample_size=None,
+        seed=seed,
+    )
 
 
 _PALETTE = [

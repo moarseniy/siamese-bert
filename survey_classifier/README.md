@@ -266,6 +266,31 @@ python scripts/visualize_index.py \
 
 Если указан `--single-label-only`, к имени файла добавляется суффикс `_single_label`.
 
+### Визуализация исходного CSV на базовой модели
+
+Для этого индекс и обученная модель не нужны. Команда читает исходный CSV,
+оставляет только строки ровно с одним кодом и считает их эмбеддинги локальной
+моделью, скачанной из Hugging Face:
+
+```bash
+python scripts/visualize_csv.py \
+  --input-csv data/answers.csv \
+  --model-path /path/to/downloaded/model \
+  --output-dir reports/base_model \
+  --text-col "Ответ" \
+  --codes-col "Коды_новые" \
+  --color-by code
+```
+
+CSV-разделитель определяется автоматически. При необходимости его можно задать
+явно: `--sep ';'`. Для раскраски по основной категории используйте
+`--color-by parent_code`. Опциональный `--codebook-txt codes.txt` добавит в
+подсказки названия категорий. По умолчанию строится быстрая PCA-визуализация;
+для t-SNE добавьте `--method tsne`.
+
+Результат сохраняется в `reports/base_model/csv_single_label_pca.html`, а рядом
+создается CSV с двумерными координатами точек.
+
 ## Python API
 
 ```python
