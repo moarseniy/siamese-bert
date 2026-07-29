@@ -38,9 +38,6 @@ class FakeCompletions:
             content = json.dumps(
                 {
                     "codes": [code],
-                    "confidence": 0.9,
-                    "needs_review": False,
-                    "explanation": "Категория соответствует тексту.",
                 },
                 ensure_ascii=False,
             )
@@ -74,15 +71,12 @@ class LLMPipelineTests(unittest.TestCase):
         FakeCompletions.max_active_requests = 0
 
     def test_parser_rejects_invented_codes_and_marks_review(self) -> None:
-        codes, confidence, review, _, invalid = parse_classification(
-            '{"codes":["A1","ZZ9"],"confidence":0.95,'
-            '"needs_review":false,"explanation":"test"}',
+        codes, review, invalid = parse_classification(
+            '{"codes":["A1","ZZ9"]}',
             allowed_codes=["A1", "B1"],
-            review_threshold=0.6,
         )
 
         self.assertEqual(codes, ["A1"])
-        self.assertEqual(confidence, 0.95)
         self.assertTrue(review)
         self.assertEqual(invalid, ["ZZ9"])
 
@@ -123,11 +117,17 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(FakeCompletions.max_active_requests, 2)
         first_request = FakeCompletions.requests[0]
         self.assertIn("response_format", first_request)
+        schema = first_request["response_format"]["json_schema"]["schema"]
+        self.assertEqual(set(schema["properties"]), {"codes"})
+        self.assertEqual(schema["properties"]["codes"]["maxItems"], 6)
+        self.assertEqual(first_request["max_tokens"], 64)
         self.assertEqual(
             first_request["extra_body"]["chat_template_kwargs"]["enable_thinking"],
             False,
         )
         self.assertEqual(result["predicted_codes"].tolist(), ["A1", "B1", "UNKNOWN"])
+        self.assertNotIn("confidence", result.columns)
+        self.assertNotIn("explanation", result.columns)
         self.assertEqual(stats["quality"]["micro_f1"], 1.0)
         self.assertEqual(stats["failed_rows"], 1)
         self.assertEqual(stats["concurrency"], 8)

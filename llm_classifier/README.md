@@ -75,10 +75,10 @@ python scripts/classify.py \
 - одновременно выполняется до 8 независимых запросов;
 - Qwen thinking отключён через
   `chat_template_kwargs.enable_thinking=false`;
-- ответ ограничен JSON Schema;
+- ответ ограничен JSON Schema `{"codes":[...]}` с максимумом 6 кодов;
 - `temperature=0`;
 - при ошибке выполняется до двух повторов;
-- ответ ограничен 128 токенами;
+- ответ ограничен 64 токенами;
 - каждые 250 завершённых строк сохраняется checkpoint в выходной файл.
 
 Thinking можно включить через `--enable-thinking`. Для старой версии vLLM без
@@ -93,7 +93,7 @@ JSON Schema используйте `--no-structured-output`.
 python scripts/classify.py ... \
   --concurrency 16 \
   --checkpoint-every 500 \
-  --max-tokens 96
+  --max-tokens 64
 ```
 
 Каждый ответ по-прежнему обрабатывается отдельным запросом. Параллельность лишь
@@ -108,14 +108,16 @@ XLSX это заметно уменьшает лишние записи на д�
 В выходной таблице появляются:
 
 - `predicted_codes`;
-- `confidence`;
 - `needs_review`;
-- `explanation`;
 - `invalid_codes`;
 - `llm_error`;
 - `latency_seconds`;
 - `prompt_tokens`, `completion_tokens`;
 - `raw_response`.
+
+LLM генерирует только поле `codes`. Колонки `needs_review` и `invalid_codes`
+вычисляются программно: review включается для `UNKNOWN`, ошибки запроса или
+кода вне справочника.
 
 Рядом сохраняются:
 
@@ -129,7 +131,3 @@ recall, exact match, hamming loss и top-1 accuracy для single-label стро
 
 В `predictions_stats.json` также записываются `wall_time_seconds`,
 `throughput_rows_per_second`, выбранный `concurrency` и latency запросов.
-
-Самооценка `confidence` со стороны LLM не является калиброванной вероятностью;
-для выбора рабочего порога ориентируйтесь на фактические метрики и долю
-`needs_review`.

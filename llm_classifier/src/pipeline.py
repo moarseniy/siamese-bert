@@ -29,9 +29,7 @@ from .metrics import calculate_metrics, metrics_paths
 
 OUTPUT_COLUMNS = [
     "predicted_codes",
-    "confidence",
     "needs_review",
-    "explanation",
     "invalid_codes",
     "llm_error",
     "latency_seconds",
@@ -44,9 +42,7 @@ OUTPUT_COLUMNS = [
 def _result_columns(result: ClassificationResult) -> dict[str, Any]:
     return {
         "predicted_codes": ", ".join(result.codes),
-        "confidence": result.confidence,
         "needs_review": result.needs_review,
-        "explanation": result.explanation,
         "invalid_codes": ", ".join(result.invalid_codes),
         "llm_error": result.error,
         "latency_seconds": round(result.latency_seconds, 4),
@@ -59,9 +55,7 @@ def _result_columns(result: ClassificationResult) -> dict[str, Any]:
 def _empty_result(reason: str) -> ClassificationResult:
     return ClassificationResult(
         codes=[UNKNOWN_CODE],
-        confidence=0.0,
         needs_review=True,
-        explanation="",
         invalid_codes=[],
         error=reason,
         raw_response="",
@@ -183,10 +177,9 @@ def run_pipeline(
     csv_sep: str | None = None,
     timeout: float = 120.0,
     max_retries: int = 2,
-    max_tokens: int = 128,
+    max_tokens: int = 64,
     temperature: float = 0.0,
     seed: int = 42,
-    review_threshold: float = 0.6,
     structured_output: bool = True,
     enable_thinking: bool = False,
     checkpoint_every: int = 250,
@@ -206,7 +199,6 @@ def run_pipeline(
         max_tokens=max_tokens,
         temperature=temperature,
         seed=seed,
-        review_threshold=review_threshold,
         structured_output=structured_output,
         enable_thinking=enable_thinking,
     )
@@ -233,7 +225,6 @@ def run_pipeline(
     stats["base_url"] = base_url
     stats["structured_output"] = structured_output
     stats["enable_thinking"] = enable_thinking
-    stats["review_threshold"] = review_threshold
 
     stats_path, per_class_path, errors_path = metrics_paths(output_path)
     if gold_col in result.columns:
@@ -270,10 +261,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-retries", type=int, default=2)
-    parser.add_argument("--max-tokens", type=int, default=128)
+    parser.add_argument("--max-tokens", type=int, default=64)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--review-threshold", type=float, default=0.6)
     parser.add_argument("--checkpoint-every", type=int, default=250)
     parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--no-structured-output", action="store_true")
@@ -295,7 +285,6 @@ def main(argv: list[str] | None = None) -> None:
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         seed=args.seed,
-        review_threshold=args.review_threshold,
         structured_output=not args.no_structured_output,
         enable_thinking=args.enable_thinking,
         checkpoint_every=args.checkpoint_every,
