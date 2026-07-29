@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -16,25 +18,39 @@ from llm_classifier.src.pipeline import run_pipeline
 
 class FakeCompletions:
     requests: list[dict[str, object]] = []
+    active_requests = 0
+    max_active_requests = 0
+    lock = threading.Lock()
 
     def create(self, **request: object) -> object:
-        type(self).requests.append(request)
-        messages = request["messages"]
-        answer_prompt = messages[1]["content"]
-        code = "A1" if "зарплата" in answer_prompt else "B1"
-        content = json.dumps(
-            {
-                "codes": [code],
-                "confidence": 0.9,
-                "needs_review": False,
-                "explanation": "Категория соответствует тексту.",
-            },
-            ensure_ascii=False,
-        )
-        return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
-            usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20),
-        )
+        with type(self).lock:
+            type(self).requests.append(request)
+            type(self).active_requests += 1
+            type(self).max_active_requests = max(
+                type(self).max_active_requests,
+                type(self).active_requests,
+            )
+        try:
+            time.sleep(0.05)
+            messages = request["messages"]
+            answer_prompt = messages[1]["content"]
+            code = "A1" if "зарплата" in answer_prompt else "B1"
+            content = json.dumps(
+                {
+                    "codes": [code],
+                    "confidence": 0.9,
+                    "needs_review": False,
+                    "explanation": "Категория соответствует тексту.",
+                },
+                ensure_ascii=False,
+            )
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+                usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20),
+            )
+        finally:
+            with type(self).lock:
+                type(self).active_requests -= 1
 
 
 class FakeOpenAI:
@@ -54,6 +70,8 @@ def fake_openai_module() -> ModuleType:
 class LLMPipelineTests(unittest.TestCase):
     def setUp(self) -> None:
         FakeCompletions.requests = []
+        FakeCompletions.active_requests = 0
+        FakeCompletions.max_active_requests = 0
 
     def test_parser_rejects_invented_codes_and_marks_review(self) -> None:
         codes, confidence, review, _, invalid = parse_classification(
@@ -68,7 +86,7 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertTrue(review)
         self.assertEqual(invalid, ["ZZ9"])
 
-    def test_sequential_pipeline_and_statistics(self) -> None:
+    def test_concurrent_pipeline_preserves_order_and_calculates_statistics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             input_path = root / "answers.csv"
@@ -102,6 +120,7 @@ class LLMPipelineTests(unittest.TestCase):
             per_class_exists = per_class_path.exists()
 
         self.assertEqual(len(FakeCompletions.requests), 2)
+        self.assertEqual(FakeCompletions.max_active_requests, 2)
         first_request = FakeCompletions.requests[0]
         self.assertIn("response_format", first_request)
         self.assertEqual(
@@ -111,6 +130,8 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(result["predicted_codes"].tolist(), ["A1", "B1", "UNKNOWN"])
         self.assertEqual(stats["quality"]["micro_f1"], 1.0)
         self.assertEqual(stats["failed_rows"], 1)
+        self.assertEqual(stats["concurrency"], 8)
+        self.assertGreater(stats["throughput_rows_per_second"], 0)
         self.assertTrue(stats_exists)
         self.assertTrue(per_class_exists)
 

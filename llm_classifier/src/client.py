@@ -139,7 +139,7 @@ class VLLMSurveyClassifier:
         allowed_codes: list[str],
         timeout: float = 120.0,
         max_retries: int = 2,
-        max_tokens: int = 256,
+        max_tokens: int = 128,
         temperature: float = 0.0,
         seed: int = 42,
         review_threshold: float = 0.6,

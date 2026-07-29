@@ -1,8 +1,9 @@
 # LLM Survey Classifier
 
-Последовательная классификация русскоязычных ответов из опросов через локальный
-Qwen3.5, поднятый в `vllm serve`. Каждый ответ отправляется отдельным
-OpenAI-compatible Chat Completions запросом; batching не используется.
+Классификация русскоязычных ответов из опросов через локальный Qwen3.5,
+поднятый в `vllm serve`. Каждый ответ отправляется отдельным OpenAI-compatible
+Chat Completions запросом. Несколько независимых запросов выполняются
+параллельно, чтобы vLLM мог использовать внутренний continuous batching.
 
 ## Установка
 
@@ -61,6 +62,7 @@ python scripts/classify.py \
   --codebook-txt ../data/codes.txt \
   --base-url http://127.0.0.1:8000/v1 \
   --model Qwen/Qwen3.5-9B \
+  --concurrency 8 \
   --text-col "Ответ" \
   --gold-col "Коды_новые"
 ```
@@ -69,16 +71,37 @@ python scripts/classify.py \
 
 По умолчанию:
 
-- один ответ отправляется одним запросом;
+- один ответ отправляется одним запросом, prompt batching не используется;
+- одновременно выполняется до 8 независимых запросов;
 - Qwen thinking отключён через
   `chat_template_kwargs.enable_thinking=false`;
 - ответ ограничен JSON Schema;
 - `temperature=0`;
 - при ошибке выполняется до двух повторов;
-- каждые 20 строк сохраняется checkpoint в выходной файл.
+- ответ ограничен 128 токенами;
+- каждые 250 завершённых строк сохраняется checkpoint в выходной файл.
 
 Thinking можно включить через `--enable-thinking`. Для старой версии vLLM без
 JSON Schema используйте `--no-structured-output`.
+
+## Скорость
+
+`--concurrency` — главный параметр производительности. Начните с `8`, затем
+сравните `16` и `32`, следя за загрузкой GPU, latency и отсутствием OOM:
+
+```bash
+python scripts/classify.py ... \
+  --concurrency 16 \
+  --checkpoint-every 500 \
+  --max-tokens 96
+```
+
+Каждый ответ по-прежнему обрабатывается отдельным запросом. Параллельность лишь
+позволяет vLLM одновременно обслуживать несколько запросов. Для старого
+строго последовательного режима укажите `--concurrency 1`.
+
+Checkpoint можно полностью отключить через `--checkpoint-every 0`. Для больших
+XLSX это заметно уменьшает лишние записи на диск.
 
 ## Результаты
 
@@ -103,6 +126,9 @@ JSON Schema используйте `--no-structured-output`.
 Метрики качества рассчитываются автоматически, только если вход содержит
 колонку `Коды_новые`. Поддерживаются multi-label micro/macro F1, precision,
 recall, exact match, hamming loss и top-1 accuracy для single-label строк.
+
+В `predictions_stats.json` также записываются `wall_time_seconds`,
+`throughput_rows_per_second`, выбранный `concurrency` и latency запросов.
 
 Самооценка `confidence` со стороны LLM не является калиброванной вероятностью;
 для выбора рабочего порога ориентируйтесь на фактические метрики и долю

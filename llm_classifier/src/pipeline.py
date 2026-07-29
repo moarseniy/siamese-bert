@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -69,40 +71,77 @@ def _empty_result(reason: str) -> ClassificationResult:
     )
 
 
+def _classify_safely(classifier: Any, answer: str) -> ClassificationResult:
+    started_at = time.perf_counter()
+    try:
+        return classifier.classify(answer)
+    except Exception as exc:
+        result = _empty_result(f"{type(exc).__name__}: {exc}")
+        result.latency_seconds = time.perf_counter() - started_at
+        return result
+
+
 def process_dataframe(
     frame: pd.DataFrame,
     classifier: Any,
     text_col: str = TEXT_COL_DEFAULT,
     checkpoint_path: str | Path | None = None,
-    checkpoint_every: int = 20,
+    checkpoint_every: int = 250,
+    concurrency: int = 8,
 ) -> pd.DataFrame:
     if text_col not in frame.columns:
         existing = ", ".join(map(str, frame.columns))
         raise ValueError(f"Missing text column {text_col!r}. Existing columns: {existing}")
+    if concurrency < 1:
+        raise ValueError("concurrency must be positive.")
 
     result = frame.copy()
     for column in OUTPUT_COLUMNS:
         result[column] = pd.Series([None] * len(result), dtype=object)
 
-    for position, (index, row) in enumerate(
-        tqdm(result.iterrows(), total=len(result), desc="LLM classification"),
-        start=1,
-    ):
-        answer = clean_text(row[text_col])
-        prediction = classifier.classify(answer) if answer else _empty_result("empty_text")
+    completed = 0
+
+    def record_prediction(
+        index: Any,
+        prediction: ClassificationResult,
+        progress: tqdm[Any],
+    ) -> None:
+        nonlocal completed
         for column, value in _result_columns(prediction).items():
             result.at[index, column] = value
-
+        completed += 1
+        progress.update(1)
         if (
             checkpoint_path is not None
             and checkpoint_every > 0
-            and position % checkpoint_every == 0
+            and completed % checkpoint_every == 0
         ):
             write_table(result, checkpoint_path)
+
+    with tqdm(total=len(result), desc="LLM classification") as progress:
+        with ThreadPoolExecutor(
+            max_workers=concurrency,
+            thread_name_prefix="vllm-request",
+        ) as executor:
+            futures: dict[Future[ClassificationResult], Any] = {}
+            for index, row in result.iterrows():
+                answer = clean_text(row[text_col])
+                if not answer:
+                    record_prediction(index, _empty_result("empty_text"), progress)
+                    continue
+                future = executor.submit(_classify_safely, classifier, answer)
+                futures[future] = index
+
+            for future in as_completed(futures):
+                record_prediction(futures[future], future.result(), progress)
     return result
 
 
-def _run_statistics(result: pd.DataFrame) -> dict[str, Any]:
+def _run_statistics(
+    result: pd.DataFrame,
+    wall_time_seconds: float,
+    concurrency: int,
+) -> dict[str, Any]:
     latencies = pd.to_numeric(result["latency_seconds"], errors="coerce").fillna(0.0)
     errors = result["llm_error"].fillna("").astype(str)
     review_values = result["needs_review"].map(
@@ -124,6 +163,11 @@ def _run_statistics(result: pd.DataFrame) -> dict[str, Any]:
         "completion_tokens": int(
             pd.to_numeric(result["completion_tokens"], errors="coerce").fillna(0).sum()
         ),
+        "wall_time_seconds": float(wall_time_seconds),
+        "throughput_rows_per_second": float(len(result) / wall_time_seconds)
+        if wall_time_seconds > 0
+        else 0.0,
+        "concurrency": concurrency,
     }
 
 
@@ -139,13 +183,14 @@ def run_pipeline(
     csv_sep: str | None = None,
     timeout: float = 120.0,
     max_retries: int = 2,
-    max_tokens: int = 256,
+    max_tokens: int = 128,
     temperature: float = 0.0,
     seed: int = 42,
     review_threshold: float = 0.6,
     structured_output: bool = True,
     enable_thinking: bool = False,
-    checkpoint_every: int = 20,
+    checkpoint_every: int = 250,
+    concurrency: int = 8,
 ) -> tuple[Path, dict[str, Any]]:
     source = read_table(input_path, csv_sep=csv_sep)
     codebook = parse_codebook(codebook_path)
@@ -165,18 +210,26 @@ def run_pipeline(
         structured_output=structured_output,
         enable_thinking=enable_thinking,
     )
+    resolved_model = classifier.resolve_model()
 
+    started_at = time.perf_counter()
     result = process_dataframe(
         frame=source,
         classifier=classifier,
         text_col=text_col,
         checkpoint_path=output_path,
         checkpoint_every=checkpoint_every,
+        concurrency=concurrency,
     )
+    wall_time_seconds = time.perf_counter() - started_at
     saved_output = write_table(result, output_path)
 
-    stats = _run_statistics(result)
-    stats["model"] = classifier.resolve_model()
+    stats = _run_statistics(
+        result,
+        wall_time_seconds=wall_time_seconds,
+        concurrency=concurrency,
+    )
+    stats["model"] = resolved_model
     stats["base_url"] = base_url
     stats["structured_output"] = structured_output
     stats["enable_thinking"] = enable_thinking
@@ -198,7 +251,10 @@ def run_pipeline(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Classify survey answers sequentially through a vLLM OpenAI-compatible API."
+        description=(
+            "Classify survey answers through concurrent independent requests "
+            "to a vLLM OpenAI-compatible API."
+        )
     )
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
@@ -214,11 +270,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-retries", type=int, default=2)
-    parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument("--max-tokens", type=int, default=128)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--review-threshold", type=float, default=0.6)
-    parser.add_argument("--checkpoint-every", type=int, default=20)
+    parser.add_argument("--checkpoint-every", type=int, default=250)
+    parser.add_argument("--concurrency", type=int, default=8)
     parser.add_argument("--no-structured-output", action="store_true")
     parser.add_argument("--enable-thinking", action="store_true")
     args = parser.parse_args(argv)
@@ -242,6 +299,7 @@ def main(argv: list[str] | None = None) -> None:
         structured_output=not args.no_structured_output,
         enable_thinking=args.enable_thinking,
         checkpoint_every=args.checkpoint_every,
+        concurrency=args.concurrency,
     )
     print(f"Saved predictions to {output_path}")
     print(json.dumps(stats, ensure_ascii=False, indent=2))
