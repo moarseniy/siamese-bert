@@ -1,0 +1,8 @@
+pandas
+openpyxl
+numpy
+torch
+transformers>=4.45,<5
+scikit-learn
+tqdm
+safetensors
