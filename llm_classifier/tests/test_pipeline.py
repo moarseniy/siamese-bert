@@ -120,6 +120,7 @@ class LLMPipelineTests(unittest.TestCase):
         schema = first_request["response_format"]["json_schema"]["schema"]
         self.assertEqual(set(schema["properties"]), {"codes"})
         self.assertEqual(schema["properties"]["codes"]["maxItems"], 6)
+        self.assertNotIn("uniqueItems", schema["properties"]["codes"])
         self.assertEqual(first_request["max_tokens"], 64)
         self.assertEqual(
             first_request["extra_body"]["chat_template_kwargs"]["enable_thinking"],

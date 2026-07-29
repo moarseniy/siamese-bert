@@ -54,7 +54,6 @@ def classification_schema(allowed_codes: list[str]) -> dict[str, Any]:
                 "items": {"type": "string", "enum": [*allowed_codes, UNKNOWN_CODE]},
                 "minItems": 1,
                 "maxItems": 6,
-                "uniqueItems": True,
             },
         },
         "required": ["codes"],
