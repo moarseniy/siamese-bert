@@ -15,9 +15,6 @@ def calculate_metrics(
     known_codes: set[str],
     prediction_col: str = "predicted_codes",
 ) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
-    if gold_codes_col not in frame.columns:
-        raise ValueError(f"Gold column {gold_codes_col!r} is absent.")
-
     gold_lists = [
         [code for code in split_codes(value) if code in known_codes]
         for value in frame[gold_codes_col]
@@ -26,25 +23,24 @@ def calculate_metrics(
         [code for code in split_codes(value) if code in known_codes]
         for value in frame[prediction_col]
     ]
-    valid_mask = np.asarray([bool(values) for values in gold_lists], dtype=bool)
-    evaluated = frame.loc[valid_mask].copy()
-    gold_lists = [values for values, keep in zip(gold_lists, valid_mask, strict=True) if keep]
-    prediction_lists = [
-        values for values, keep in zip(prediction_lists, valid_mask, strict=True) if keep
+    labeled_mask = np.array([bool(codes) for codes in gold_lists])
+    evaluated = frame.loc[labeled_mask].copy()
+    evaluated_gold = [
+        codes for codes, keep in zip(gold_lists, labeled_mask, strict=True) if keep
+    ]
+    evaluated_predictions = [
+        codes
+        for codes, keep in zip(prediction_lists, labeled_mask, strict=True)
+        if keep
     ]
     base_metrics = {
         "input_rows": int(len(frame)),
-        "evaluated_rows": int(valid_mask.sum()),
-        "rows_without_known_gold_codes": int((~valid_mask).sum()),
+        "evaluated_rows": int(labeled_mask.sum()),
+        "rows_without_known_gold_codes": int((~labeled_mask).sum()),
     }
-    if not gold_lists:
-        return (
-            base_metrics,
-            pd.DataFrame(
-                columns=["code", "support", "precision", "recall", "f1"]
-            ),
-            pd.DataFrame(),
-        )
+    columns = ["code", "support", "precision", "recall", "f1"]
+    if not evaluated_gold:
+        return base_metrics, pd.DataFrame(columns=columns), pd.DataFrame()
 
     from sklearn.metrics import (
         accuracy_score,
@@ -59,23 +55,21 @@ def calculate_metrics(
     classes = sorted(known_codes)
     binarizer = MultiLabelBinarizer(classes=classes)
     binarizer.fit([classes])
-    y_true = binarizer.transform(gold_lists)
-    y_pred = binarizer.transform(prediction_lists)
-
+    y_true = binarizer.transform(evaluated_gold)
+    y_pred = binarizer.transform(evaluated_predictions)
     single_mask = y_true.sum(axis=1) == 1
-    single_top1_accuracy: float | None = None
+    single_top1: float | None = None
     if single_mask.any():
         true_top1 = y_true[single_mask].argmax(axis=1)
         predicted_first = [
-            classes.index(prediction_lists[index][0])
-            if prediction_lists[index] and prediction_lists[index][0] in classes
+            classes.index(evaluated_predictions[index][0])
+            if evaluated_predictions[index]
             else -1
             for index in np.flatnonzero(single_mask)
         ]
-        single_top1_accuracy = float(
+        single_top1 = float(
             (true_top1 == np.asarray(predicted_first, dtype=int)).mean()
         )
-
     metrics = {
         **base_metrics,
         "micro_precision": float(
@@ -88,12 +82,11 @@ def calculate_metrics(
         "macro_f1": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
         "subset_accuracy": float(accuracy_score(y_true, y_pred)),
         "hamming_loss": float(hamming_loss(y_true, y_pred)),
-        "single_label_top1_accuracy": single_top1_accuracy,
+        "single_label_top1_accuracy": single_top1,
         "unknown_prediction_rate": float(
-            np.mean([not values for values in prediction_lists])
+            np.mean([not values for values in evaluated_predictions])
         ),
     }
-
     precision, recall, f1, support = precision_recall_fscore_support(
         y_true,
         y_pred,
@@ -109,18 +102,19 @@ def calculate_metrics(
             "f1": f1,
         }
     ).sort_values(["support", "code"], ascending=[False, True])
-
     mismatches = [
         set(gold) != set(predicted)
-        for gold, predicted in zip(gold_lists, prediction_lists, strict=True)
+        for gold, predicted in zip(
+            evaluated_gold,
+            evaluated_predictions,
+            strict=True,
+        )
     ]
-    errors = evaluated.loc[mismatches].copy()
-    return metrics, per_class, errors
+    return metrics, per_class, evaluated.loc[mismatches].copy()
 
 
 def metrics_paths(output_path: str | Path) -> tuple[Path, Path, Path]:
-    output = Path(output_path)
-    prefix = output.with_suffix("")
+    prefix = Path(output_path).with_suffix("")
     return (
         prefix.parent / f"{prefix.name}_stats.json",
         prefix.parent / f"{prefix.name}_per_class.csv",

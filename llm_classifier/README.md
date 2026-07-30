@@ -56,15 +56,16 @@ LLM разрешено возвращать только коды подкате
 ## Классификация
 
 ```bash
-python scripts/classify.py \
+python scripts/predict.py \
   --input ../data/answers.xlsx \
   --output output/predictions.xlsx \
-  --codebook-txt ../data/codes.txt \
+  --codebook ../data/codes.txt \
   --base-url http://127.0.0.1:8000/v1 \
   --model Qwen/Qwen3.5-9B \
   --concurrency 8 \
   --text-col "Ответ" \
-  --gold-col "Коды_новые"
+  --gold-codes-col "Коды_новые" \
+  --max-labels 6
 ```
 
 `--model` можно не указывать: тогда используется первая модель из `/v1/models`.
@@ -90,7 +91,7 @@ JSON Schema используйте `--no-structured-output`.
 сравните `16` и `32`, следя за загрузкой GPU, latency и отсутствием OOM:
 
 ```bash
-python scripts/classify.py ... \
+python scripts/predict.py ... \
   --concurrency 16 \
   --checkpoint-every 500 \
   --max-tokens 64
@@ -108,6 +109,10 @@ XLSX это заметно уменьшает лишние записи на д�
 В выходной таблице появляются:
 
 - `predicted_codes`;
+- `predicted_names`;
+- `predicted_parent_codes`;
+- `predicted_parent_names`;
+- `confidence`, `margin`, `top_candidates`;
 - `needs_review`;
 - `invalid_codes`;
 - `llm_error`;
@@ -115,9 +120,10 @@ XLSX это заметно уменьшает лишние записи на д�
 - `prompt_tokens`, `completion_tokens`;
 - `raw_response`.
 
-LLM генерирует только поле `codes`. Колонки `needs_review` и `invalid_codes`
-вычисляются программно: review включается для `UNKNOWN`, ошибки запроса или
-кода вне справочника.
+LLM генерирует только поле `codes`, поэтому `confidence` и `margin` остаются
+пустыми. Названия и основные категории берутся из справочника программно.
+`needs_review` включается для `UNKNOWN`, ошибки запроса или кода вне
+справочника.
 
 Рядом сохраняются:
 
@@ -125,9 +131,10 @@ LLM генерирует только поле `codes`. Колонки `needs_re
 - `predictions_per_class.csv` — precision/recall/F1 по кодам;
 - `predictions_errors.csv` — строки с несовпавшей разметкой.
 
-Метрики качества рассчитываются автоматически, только если вход содержит
-колонку `Коды_новые`. Поддерживаются multi-label micro/macro F1, precision,
-recall, exact match, hamming loss и top-1 accuracy для single-label строк.
+Метрики качества рассчитываются при переданном
+`--gold-codes-col "Коды_новые"`. Поддерживаются multi-label micro/macro F1,
+precision, recall, exact match, hamming loss и top-1 accuracy для single-label
+строк.
 
 В `predictions_stats.json` также записываются `wall_time_seconds`,
 `throughput_rows_per_second`, выбранный `concurrency` и latency запросов.

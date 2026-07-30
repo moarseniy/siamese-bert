@@ -2,7 +2,8 @@
 
 Production pipeline для multi-label классификации текстовых ответов из опросов по изменяемому справочнику категорий.
 
-Проект обучает локальную `sentence-transformers` модель, строит индекс исторических примеров и центроидов категорий, а затем классифицирует новые Excel-файлы.
+Проект обучает локальную `sentence-transformers` модель, строит индекс
+исторических примеров и центроидов категорий, а затем классифицирует CSV/XLSX.
 
 ## Установка
 
@@ -20,7 +21,7 @@ pip install -r requirements.txt
 
 ## Формат данных
 
-Исторический Excel для обучения должен содержать:
+Исторический CSV/XLSX для обучения должен содержать:
 
 - `Ответ` - текст ответа;
 - `Коды_новые` - один или несколько кодов через запятую, например `A1, A2`.
@@ -38,9 +39,9 @@ TXT-справочник:
 ## Полное обучение
 
 ```bash
-python scripts/train_pipeline.py \
-  --train-xlsx train.xlsx \
-  --codebook-txt codes.txt \
+python scripts/train.py \
+  --train train.xlsx \
+  --codebook codes.txt \
   --out-dir model_out \
   --training-mode contrastive \
   --epochs 1 \
@@ -56,9 +57,9 @@ python scripts/train_pipeline.py \
 Обучение FRIDA из Hugging Face:
 
 ```bash
-python scripts/train_pipeline.py \
-  --train-xlsx train.xlsx \
-  --codebook-txt codes.txt \
+python scripts/train.py \
+  --train train.xlsx \
+  --codebook codes.txt \
   --out-dir model_out_frida \
   --base-model ai-forever/FRIDA \
   --prompt-name categorize_topic \
@@ -105,9 +106,9 @@ Pipeline делает четыре шага:
 `--training-mode mnrl` - прежний режим на positive pairs с `MultipleNegativesRankingLoss`. Явных негативных строк нет, но остальные элементы batch работают как in-batch negatives.
 
 ```bash
-python scripts/train_pipeline.py \
-  --train-xlsx train.xlsx \
-  --codebook-txt codes.txt \
+python scripts/train.py \
+  --train train.xlsx \
+  --codebook codes.txt \
   --out-dir model_out \
   --training-mode mnrl
 ```
@@ -115,9 +116,9 @@ python scripts/train_pipeline.py \
 `--training-mode triplet` - triplet learning: `anchor`, `positive` из того же кода, `negative` из ответа без этого кода. Используется `TripletLoss` с cosine distance.
 
 ```bash
-python scripts/train_pipeline.py \
-  --train-xlsx train.xlsx \
-  --codebook-txt codes.txt \
+python scripts/train.py \
+  --train train.xlsx \
+  --codebook codes.txt \
   --out-dir model_out \
   --training-mode triplet \
   --max-triplets-per-code 5000 \
@@ -159,8 +160,8 @@ model_out/
 
 ```bash
 python -m src.build_index \
-  --train-xlsx train.xlsx \
-  --codebook-txt codes.txt \
+  --train train.xlsx \
+  --codebook codes.txt \
   --out-dir model_out \
   --batch-size 64
 ```
@@ -169,40 +170,44 @@ python -m src.build_index \
 
 ```bash
 python -m src.build_index \
-  --train-xlsx train.xlsx \
-  --codebook-txt codes.txt \
+  --train train.xlsx \
+  --codebook codes.txt \
   --out-dir model_out \
   --model-dir model_out/model
 ```
 
-## Классификация нового Excel
+## Классификация
 
 ```bash
-python -m src.predict \
+python scripts/predict.py \
   --model-dir model_out \
-  --input-xlsx new_survey.xlsx \
-  --output-xlsx predictions.xlsx \
+  --input new_survey.xlsx \
+  --output predictions.xlsx \
   --text-col "Ответ" \
   --top-k 5 \
   --threshold 0.65 \
+  --max-labels 6 \
   --margin-threshold 0.05
 ```
 
-То же через script wrapper:
+Для размеченного файла можно сразу посчитать метрики:
 
 ```bash
-python scripts/predict_excel.py \
+python scripts/predict.py \
   --model-dir model_out \
-  --input-xlsx new_survey.xlsx \
-  --output-xlsx predictions.xlsx
+  --input check.xlsx \
+  --output check_predictions.xlsx \
+  --gold-codes-col "Коды_новые"
 ```
 
-Выходной Excel содержит исходные колонки и новые:
+Выходная таблица содержит исходные колонки и новые:
 
 - `predicted_codes`;
 - `predicted_names`;
-- `parent_codes`;
+- `predicted_parent_codes`;
+- `predicted_parent_names`;
 - `confidence`;
+- `margin`;
 - `needs_review`;
 - `top_candidates`;
 - `nearest_examples`.
@@ -308,8 +313,8 @@ python scripts/visualize_index.py \
 
 ```bash
 python scripts/visualize_csv.py \
-  --input-csv data/answers.csv \
-  --model-path /path/to/downloaded/model \
+  --input data/answers.csv \
+  --model-dir /path/to/downloaded/model \
   --output-dir reports/base_model \
   --text-col "Ответ" \
   --codes-col "Коды_новые" \
@@ -320,16 +325,16 @@ python scripts/visualize_csv.py \
 
 ```bash
 python scripts/visualize_csv.py \
-  --input-csv data/answers.csv \
-  --model-path /path/to/FRIDA \
+  --input data/answers.csv \
+  --model-dir /path/to/FRIDA \
   --output-dir reports/frida \
   --prompt-name categorize_topic \
   --color-by parent_code
 ```
 
 CSV-разделитель определяется автоматически. При необходимости его можно задать
-явно: `--sep ';'`. Для раскраски по основной категории используйте
-`--color-by parent_code`. Опциональный `--codebook-txt codes.txt` добавит в
+явно: `--csv-sep ';'`. Для раскраски по основной категории используйте
+`--color-by parent_code`. Опциональный `--codebook codes.txt` добавит в
 подсказки названия категорий. По умолчанию строится быстрая PCA-визуализация;
 для t-SNE добавьте `--method tsne`.
 

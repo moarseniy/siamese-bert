@@ -52,7 +52,7 @@ B1. Качество продукта
 Минимальный запуск:
 
 ```bash
-python scripts/train_pipeline.py \
+python scripts/train.py \
   --train data/train.csv \
   --codebook data/codes.txt \
   --out-dir model_out \
@@ -62,7 +62,7 @@ python scripts/train_pipeline.py \
 Для Excel команда такая же:
 
 ```bash
-python scripts/train_pipeline.py \
+python scripts/train.py \
   --train data/train.xlsx \
   --codebook data/codes.txt \
   --out-dir model_out \
@@ -78,7 +78,7 @@ python scripts/train_pipeline.py \
 Если в данных есть колонка с текстом вопроса:
 
 ```bash
-python scripts/train_pipeline.py \
+python scripts/train.py \
   --train data/train.xlsx \
   --codebook data/codes.txt \
   --out-dir model_out \
@@ -89,7 +89,7 @@ python scripts/train_pipeline.py \
 Локальная базовая модель:
 
 ```bash
-python scripts/train_pipeline.py \
+python scripts/train.py \
   --train data/train.xlsx \
   --codebook data/codes.txt \
   --out-dir model_out \
@@ -115,7 +115,7 @@ python scripts/train_pipeline.py \
 Если не хватает VRAM:
 
 ```bash
-python scripts/train_pipeline.py \
+python scripts/train.py \
   --train data/train.xlsx \
   --codebook data/codes.txt \
   --out-dir model_out \
@@ -190,6 +190,7 @@ python scripts/predict.py \
   --context-col "Вопрос" \
   --threshold 0.35 \
   --max-labels 6 \
+  --margin-threshold 0.05 \
   --device cuda
 ```
 
@@ -199,7 +200,8 @@ python scripts/predict.py \
 - `predicted_parent_codes` и `predicted_parent_names`;
 - `confidence` и `margin`;
 - `top_candidates`;
-- `needs_review` - `True`, если ни один код не прошел порог.
+- `needs_review` - `True`, если ни один код не прошел порог или `margin` ниже
+  `--margin-threshold`.
 
 Если файл уже размечен, можно сразу посчитать качество:
 

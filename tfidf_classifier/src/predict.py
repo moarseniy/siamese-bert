@@ -71,8 +71,12 @@ def classify_file(
     result = source.reset_index(drop=True).copy()
     result["predicted_codes"] = predictions["predicted_codes"].apply(_join_values)
     result["predicted_names"] = predictions["predicted_names"].apply(_join_values)
-    result["predicted_parent_codes"] = predictions["parent_codes"].apply(_join_values)
-    result["predicted_parent_names"] = predictions["parent_names"].apply(_join_values)
+    result["predicted_parent_codes"] = predictions[
+        "predicted_parent_codes"
+    ].apply(_join_values)
+    result["predicted_parent_names"] = predictions[
+        "predicted_parent_names"
+    ].apply(_join_values)
     result["confidence"] = predictions["confidence"]
     result["margin"] = predictions["margin"]
     result["top_candidates"] = predictions["top_candidates"].apply(_format_candidates)
@@ -100,6 +104,7 @@ def classify_file(
             threshold=selected_threshold,
             max_labels=selected_max_labels,
         )
+        metrics.pop("n_rows", None)
         metrics["input_rows"] = int(len(source))
         metrics["evaluated_rows"] = int(labeled_mask.sum())
         metrics["rows_without_known_gold_codes"] = int((~labeled_mask).sum())

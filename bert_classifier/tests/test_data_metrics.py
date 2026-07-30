@@ -1,22 +1,17 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.data_io import (  # noqa: E402
+from bert_classifier.src.data_io import (
     load_labeled_data,
     parse_codebook,
     split_codes,
     split_train_val_test,
 )
-from src.metrics import calculate_metrics, encode_labels, select_threshold  # noqa: E402
+from bert_classifier.src.metrics import calculate_metrics, encode_labels, select_threshold
 
 
 def _write_codebook(path: Path) -> None:

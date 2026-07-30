@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pandas as pd
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from src.data_io import load_labeled_data, split_train_val_test  # noqa: E402
-from src.model import TfidfSurveyClassifier, train_tfidf  # noqa: E402
-from src.predict import classify_file  # noqa: E402
-from src.utils import read_json  # noqa: E402
+from tfidf_classifier.src.data_io import load_labeled_data, split_train_val_test
+from tfidf_classifier.src.model import TfidfSurveyClassifier, train_tfidf
+from tfidf_classifier.src.predict import classify_file
+from tfidf_classifier.src.utils import read_json
 
 
 def _write_dataset(root: Path) -> tuple[Path, Path]:

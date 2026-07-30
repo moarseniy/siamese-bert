@@ -17,9 +17,13 @@ from src.utils import read_json
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train model and build production index.")
-    parser.add_argument("--train-xlsx", required=True, type=Path)
-    parser.add_argument("--codebook-txt", required=True, type=Path)
+    parser.add_argument("--train", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument("--text-col", default="Ответ")
+    parser.add_argument("--codes-col", default="Коды_новые")
+    parser.add_argument("--context-col", default=None)
+    parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL)
     parser.add_argument("--training-mode", choices=["mnrl", "contrastive", "triplet"], default="contrastive")
     parser.add_argument("--epochs", type=int, default=1)
@@ -42,8 +46,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     print("Loading training data...")
-    train_df = load_train_data(args.train_xlsx, args.codebook_txt)
-    codebook_df = parse_codebook(args.codebook_txt)
+    train_df = load_train_data(
+        args.train,
+        args.codebook,
+        text_col=args.text_col,
+        codes_col=args.codes_col,
+        context_col=args.context_col,
+        csv_sep=args.csv_sep,
+    )
+    codebook_df = parse_codebook(args.codebook)
     print(f"Loaded {len(train_df)} training rows across {train_df['code'].nunique()} codes.")
 
     print("Splitting train/val/test...")

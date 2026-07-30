@@ -167,12 +167,12 @@ def main(argv: list[str] | None = None) -> None:
             "Sentence Transformers model."
         )
     )
-    parser.add_argument("--input-csv", required=True, type=Path)
-    parser.add_argument("--model-path", required=True, type=Path)
+    parser.add_argument("--input", required=True, type=Path)
+    parser.add_argument("--model-dir", required=True, type=Path)
     parser.add_argument("--output-dir", type=Path, default=Path("visualization"))
     parser.add_argument("--text-col", default=TEXT_COL_DEFAULT)
     parser.add_argument("--codes-col", default=CODES_COL_DEFAULT)
-    parser.add_argument("--codebook-txt", type=Path, default=None)
+    parser.add_argument("--codebook", type=Path, default=None)
     parser.add_argument("--method", choices=["pca", "tsne"], default="pca")
     parser.add_argument("--color-by", choices=["code", "parent_code"], default="code")
     parser.add_argument("--sample-size", type=int, default=5000)
@@ -183,27 +183,27 @@ def main(argv: list[str] | None = None) -> None:
     prompt_group.add_argument("--input-prefix", default=None)
     parser.add_argument("--encoding", default="utf-8-sig")
     parser.add_argument(
-        "--sep",
+        "--csv-sep",
         default=None,
-        help="CSV delimiter. By default it is detected automatically; for example: --sep ';'",
+        help="CSV delimiter. By default it is detected automatically.",
     )
     parser.add_argument("--output-prefix", default=None)
     args = parser.parse_args(argv)
 
     csv_path, html_path = visualize_csv(
-        input_csv=args.input_csv,
-        model_path=args.model_path,
+        input_csv=args.input,
+        model_path=args.model_dir,
         output_dir=args.output_dir,
         text_col=args.text_col,
         codes_col=args.codes_col,
-        codebook_txt=args.codebook_txt,
+        codebook_txt=args.codebook,
         method=args.method,
         color_by=args.color_by,
         sample_size=args.sample_size,
         seed=args.seed,
         batch_size=args.batch_size,
         encoding=args.encoding,
-        sep=args.sep,
+        sep=args.csv_sep,
         output_prefix=args.output_prefix,
         prompt_name=args.prompt_name,
         input_prefix=args.input_prefix,

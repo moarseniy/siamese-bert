@@ -172,18 +172,29 @@ def build_index(
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Build production centroid/example index.")
-    parser.add_argument("--train-xlsx", required=True, type=Path)
-    parser.add_argument("--codebook-txt", required=True, type=Path)
+    parser.add_argument("--train", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path)
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--model-dir", type=Path, default=None)
+    parser.add_argument("--text-col", default="Ответ")
+    parser.add_argument("--codes-col", default="Коды_новые")
+    parser.add_argument("--context-col", default=None)
+    parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--batch-size", type=int, default=64)
     prompt_group = parser.add_mutually_exclusive_group()
     prompt_group.add_argument("--prompt-name", default=None)
     prompt_group.add_argument("--input-prefix", default=None)
     args = parser.parse_args(argv)
 
-    train_df = load_train_data(args.train_xlsx, args.codebook_txt)
-    codebook_df = parse_codebook(args.codebook_txt)
+    train_df = load_train_data(
+        args.train,
+        args.codebook,
+        text_col=args.text_col,
+        codes_col=args.codes_col,
+        context_col=args.context_col,
+        csv_sep=args.csv_sep,
+    )
+    codebook_df = parse_codebook(args.codebook)
     build_index(
         train_df=train_df,
         codebook_df=codebook_df,

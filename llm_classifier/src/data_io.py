@@ -40,6 +40,14 @@ def clean_text(value: Any) -> str:
     return "" if is_missing(value) else str(value).strip()
 
 
+def combine_text(answer: Any, context: Any = None) -> str:
+    answer_text = clean_text(answer)
+    context_text = clean_text(context)
+    if context_text:
+        return f"Контекст: {context_text}\nОтвет: {answer_text}"
+    return answer_text
+
+
 def normalize_code(value: Any) -> str:
     if is_missing(value):
         return ""

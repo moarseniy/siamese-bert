@@ -38,6 +38,10 @@ def _is_missing(value: Any) -> bool:
         return False
 
 
+def clean_text(value: Any) -> str:
+    return "" if _is_missing(value) else str(value).strip()
+
+
 def normalize_code(code: str) -> str:
     if _is_missing(code):
         return ""
@@ -117,31 +121,70 @@ def _require_columns(frame: pd.DataFrame, columns: list[str], source: str | Path
         raise ValueError(f"Missing columns in {source}: {missing}. Existing columns: {existing}")
 
 
+def read_table(path: str | Path, csv_sep: str | None = None) -> pd.DataFrame:
+    source_path = Path(path)
+    if not source_path.exists():
+        raise FileNotFoundError(f"Input file not found: {source_path}")
+    suffix = source_path.suffix.lower()
+    if suffix in {".xlsx", ".xlsm"}:
+        return pd.read_excel(source_path, engine="openpyxl")
+    if suffix == ".csv":
+        return pd.read_csv(
+            source_path,
+            sep=csv_sep,
+            engine="python" if csv_sep is None else "c",
+            encoding="utf-8-sig",
+        )
+    raise ValueError("Input file must be .xlsx, .xlsm or .csv.")
+
+
+def write_table(frame: pd.DataFrame, path: str | Path) -> Path:
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    suffix = output_path.suffix.lower()
+    if suffix in {".xlsx", ".xlsm"}:
+        frame.to_excel(output_path, index=False, engine="openpyxl")
+    elif suffix == ".csv":
+        frame.to_csv(output_path, index=False, encoding="utf-8-sig")
+    else:
+        raise ValueError("Output file must be .xlsx, .xlsm or .csv.")
+    return output_path
+
+
+def combine_text(answer: Any, context: Any = None) -> str:
+    answer_text = clean_text(answer)
+    context_text = clean_text(context)
+    if context_text:
+        return f"Контекст: {context_text}\nОтвет: {answer_text}"
+    return answer_text
+
+
 def load_train_data(
-    xlsx_path: str | Path,
-    txt_path: str | Path,
+    input_path: str | Path,
+    codebook_path: str | Path,
     text_col: str = TEXT_COL_DEFAULT,
     codes_col: str = CODES_COL_DEFAULT,
+    context_col: str | None = None,
+    csv_sep: str | None = None,
 ) -> pd.DataFrame:
-    xlsx = Path(xlsx_path)
-    if not xlsx.exists():
-        raise FileNotFoundError(f"Training Excel file not found: {xlsx}")
-
-    codebook = parse_codebook(txt_path)
+    source_path = Path(input_path)
+    codebook = parse_codebook(codebook_path)
     codebook_by_code = codebook.set_index("code").to_dict(orient="index")
 
-    source = pd.read_excel(xlsx, engine="openpyxl")
-    _require_columns(source, [text_col, codes_col], xlsx)
+    source = read_table(source_path, csv_sep=csv_sep)
+    required = [text_col, codes_col]
+    if context_col:
+        required.append(context_col)
+    _require_columns(source, required, source_path)
 
     records: list[dict[str, Any]] = []
     missing_codes: set[str] = set()
     for row_id, row in source.iterrows():
-        text_value = row[text_col]
-        if _is_missing(text_value):
+        answer = clean_text(row[text_col])
+        if not answer:
             continue
-        text = str(text_value).strip()
-        if not text:
-            continue
+        context = row[context_col] if context_col else None
+        text = combine_text(answer, context)
 
         codes = [code for code in split_codes(row[codes_col]) if code != UNKNOWN_CODE]
         if not codes:

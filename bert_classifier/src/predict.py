@@ -31,6 +31,7 @@ def classify_file(
     threshold: float | None = None,
     max_labels: int | None = None,
     top_k: int = 5,
+    margin_threshold: float = 0.05,
     device: str | None = None,
     trust_remote_code: bool | None = None,
 ) -> Path:
@@ -57,6 +58,7 @@ def classify_file(
         threshold=threshold,
         max_labels=max_labels,
         top_k=top_k,
+        margin_threshold=margin_threshold,
     )
     result = pd.concat(
         [source.reset_index(drop=True), predictions.reset_index(drop=True)],
@@ -85,6 +87,7 @@ def classify_file(
             threshold=chosen_threshold,
             max_labels=chosen_max_labels,
         )
+        metrics.pop("n_rows", None)
         metrics["input_rows"] = int(len(source))
         metrics["evaluated_rows"] = int(labeled_mask.sum())
         metrics["rows_without_known_gold_codes"] = int((~labeled_mask).sum())
@@ -136,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--max-labels", type=int, default=None)
     parser.add_argument("--top-k", type=int, default=5)
+    parser.add_argument("--margin-threshold", type=float, default=0.05)
     parser.add_argument("--device", default=None)
     remote_group = parser.add_mutually_exclusive_group()
     remote_group.add_argument(
@@ -168,6 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         threshold=args.threshold,
         max_labels=args.max_labels,
         top_k=args.top_k,
+        margin_threshold=args.margin_threshold,
         device=args.device,
         trust_remote_code=args.trust_remote_code,
     )

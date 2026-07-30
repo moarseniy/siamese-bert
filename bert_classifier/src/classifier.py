@@ -128,6 +128,7 @@ class BertSurveyClassifier:
         threshold: float | None = None,
         max_labels: int | None = None,
         top_k: int = 5,
+        margin_threshold: float = 0.05,
     ) -> pd.DataFrame:
         chosen_threshold = self.threshold if threshold is None else threshold
         chosen_max_labels = self.max_labels if max_labels is None else max_labels
@@ -135,6 +136,8 @@ class BertSurveyClassifier:
             raise ValueError("threshold must be in [0, 1].")
         if chosen_max_labels < 1 or top_k < 1:
             raise ValueError("max_labels and top_k must be positive.")
+        if margin_threshold < 0:
+            raise ValueError("margin_threshold must be non-negative.")
         if probabilities.ndim != 2 or probabilities.shape[1] != len(self.classes):
             raise ValueError("Probability matrix does not match classifier classes.")
 
@@ -169,21 +172,23 @@ class BertSurveyClassifier:
                     )
             top_score = float(scores[ranked[0]]) if len(ranked) else 0.0
             second_score = float(scores[ranked[1]]) if len(ranked) > 1 else 0.0
+            margin = top_score - second_score
             rows.append(
                 {
                     "predicted_codes": ", ".join(codes) or UNKNOWN_CODE,
-                    "predicted_names": "; ".join(
-                        self.name_by_code.get(code, code) for code in codes
+                    "predicted_names": (
+                        "; ".join(self.name_by_code.get(code, code) for code in codes)
+                        or UNKNOWN_CODE
                     ),
                     "predicted_parent_codes": ", ".join(parent_codes),
                     "predicted_parent_names": "; ".join(parent_names),
                     "confidence": top_score,
-                    "margin": top_score - second_score,
+                    "margin": margin,
                     "top_candidates": "; ".join(
                         f"{self.classes[index]}:{scores[index]:.4f}"
                         for index in ranked[: min(top_k, len(ranked))]
                     ),
-                    "needs_review": not codes,
+                    "needs_review": not codes or margin < margin_threshold,
                 }
             )
         return pd.DataFrame(rows, columns=columns)
@@ -196,6 +201,7 @@ class BertSurveyClassifier:
         threshold: float | None = None,
         max_labels: int | None = None,
         top_k: int = 5,
+        margin_threshold: float = 0.05,
         show_progress: bool = True,
     ) -> tuple[pd.DataFrame, np.ndarray]:
         probabilities = self.predict_probabilities(
@@ -210,6 +216,7 @@ class BertSurveyClassifier:
                 threshold=threshold,
                 max_labels=max_labels,
                 top_k=top_k,
+                margin_threshold=margin_threshold,
             ),
             probabilities,
         )

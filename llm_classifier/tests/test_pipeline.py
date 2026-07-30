@@ -104,6 +104,7 @@ class LLMPipelineTests(unittest.TestCase):
                     output_path=output_path,
                     codebook_path=codebook_path,
                     model="Qwen/Qwen3.5-test",
+                    gold_codes_col="Коды_новые",
                     checkpoint_every=1,
                 )
 
@@ -127,9 +128,13 @@ class LLMPipelineTests(unittest.TestCase):
             False,
         )
         self.assertEqual(result["predicted_codes"].tolist(), ["A1", "B1", "UNKNOWN"])
-        self.assertNotIn("confidence", result.columns)
+        self.assertIn("confidence", result.columns)
+        self.assertIn("predicted_names", result.columns)
+        self.assertIn("predicted_parent_codes", result.columns)
+        self.assertIn("predicted_parent_names", result.columns)
         self.assertNotIn("explanation", result.columns)
-        self.assertEqual(stats["quality"]["micro_f1"], 1.0)
+        self.assertEqual(stats["micro_f1"], 1.0)
+        self.assertEqual(stats["evaluated_rows"], 2)
         self.assertEqual(stats["failed_rows"], 1)
         self.assertEqual(stats["concurrency"], 8)
         self.assertGreater(stats["throughput_rows_per_second"], 0)

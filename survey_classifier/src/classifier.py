@@ -125,11 +125,14 @@ class SurveyClassifier:
         embedding: np.ndarray,
         top_k: int,
         threshold: float,
+        max_labels: int,
         margin_threshold: float,
         nearest_k: int,
     ) -> dict[str, Any]:
         if top_k < 1:
             raise ValueError("top_k must be positive.")
+        if max_labels < 1:
+            raise ValueError("max_labels must be positive.")
 
         scores = cosine_scores(embedding, self.subcategory_centroids)
         top_count = min(top_k, len(scores))
@@ -158,7 +161,7 @@ class SurveyClassifier:
             candidate
             for candidate, score in zip(top_candidates, top_scores, strict=True)
             if score >= threshold
-        ]
+        ][:max_labels]
 
         needs_review = (
             top1_similarity < threshold
@@ -173,6 +176,13 @@ class SurveyClassifier:
                 code
                 for code in dict.fromkeys(candidate["parent_code"] for candidate in predicted_candidates)
                 if code
+            ]
+            parent_names = [
+                name
+                for name in dict.fromkeys(
+                    candidate["parent_name"] for candidate in predicted_candidates
+                )
+                if name
             ]
             nearest_examples = [
                 {
@@ -190,13 +200,15 @@ class SurveyClassifier:
             predicted_codes = [UNKNOWN_CODE]
             predicted_names = [UNKNOWN_CODE]
             parent_codes = []
+            parent_names = []
             nearest_examples = []
 
         return {
             "text": text,
             "predicted_codes": predicted_codes,
             "predicted_names": predicted_names,
-            "parent_codes": parent_codes,
+            "predicted_parent_codes": parent_codes,
+            "predicted_parent_names": parent_names,
             "confidence": compact_float(top1_similarity),
             "margin": compact_float(margin),
             "top_candidates": top_candidates,
@@ -209,6 +221,7 @@ class SurveyClassifier:
         text: str,
         top_k: int = 5,
         threshold: float = 0.65,
+        max_labels: int = 6,
         margin_threshold: float = 0.05,
         nearest_k: int = 2,
     ) -> dict[str, Any]:
@@ -219,6 +232,7 @@ class SurveyClassifier:
             embedding=embedding,
             top_k=top_k,
             threshold=threshold,
+            max_labels=max_labels,
             margin_threshold=margin_threshold,
             nearest_k=nearest_k,
         )
@@ -228,6 +242,7 @@ class SurveyClassifier:
         texts: Iterable[str],
         top_k: int = 5,
         threshold: float = 0.65,
+        max_labels: int = 6,
         margin_threshold: float = 0.05,
         nearest_k: int = 2,
         batch_size: int = 64,
@@ -239,7 +254,8 @@ class SurveyClassifier:
                     "text",
                     "predicted_codes",
                     "predicted_names",
-                    "parent_codes",
+                    "predicted_parent_codes",
+                    "predicted_parent_names",
                     "confidence",
                     "margin",
                     "top_candidates",
@@ -254,6 +270,7 @@ class SurveyClassifier:
                 embedding=embedding,
                 top_k=top_k,
                 threshold=threshold,
+                max_labels=max_labels,
                 margin_threshold=margin_threshold,
                 nearest_k=nearest_k,
             )

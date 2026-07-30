@@ -14,11 +14,11 @@ from tqdm import tqdm
 
 from .client import ClassificationResult, VLLMSurveyClassifier
 from .data_io import (
-    CODES_COL_DEFAULT,
     TEXT_COL_DEFAULT,
     UNKNOWN_CODE,
     assignable_codes,
     clean_text,
+    combine_text,
     parse_codebook,
     read_table,
     render_codebook,
@@ -29,6 +29,12 @@ from .metrics import calculate_metrics, metrics_paths
 
 OUTPUT_COLUMNS = [
     "predicted_codes",
+    "predicted_names",
+    "predicted_parent_codes",
+    "predicted_parent_names",
+    "confidence",
+    "margin",
+    "top_candidates",
     "needs_review",
     "invalid_codes",
     "llm_error",
@@ -39,9 +45,36 @@ OUTPUT_COLUMNS = [
 ]
 
 
-def _result_columns(result: ClassificationResult) -> dict[str, Any]:
+def _result_columns(
+    result: ClassificationResult,
+    codebook_lookup: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    codes = [code for code in result.codes if code != UNKNOWN_CODE]
+    names = [
+        str(codebook_lookup.get(code, {}).get("name", code))
+        for code in codes
+    ]
+    parent_codes: list[str] = []
+    parent_names: list[str] = []
+    for code in codes:
+        info = codebook_lookup.get(code, {})
+        parent = str(info.get("parent_code", "") or "")
+        if parent and parent not in parent_codes:
+            parent_codes.append(parent)
+            parent_names.append(
+                str(
+                    info.get("parent_name", "")
+                    or codebook_lookup.get(parent, {}).get("name", parent)
+                )
+            )
     return {
         "predicted_codes": ", ".join(result.codes),
+        "predicted_names": "; ".join(names) or UNKNOWN_CODE,
+        "predicted_parent_codes": ", ".join(parent_codes),
+        "predicted_parent_names": "; ".join(parent_names),
+        "confidence": None,
+        "margin": None,
+        "top_candidates": ", ".join(codes),
         "needs_review": result.needs_review,
         "invalid_codes": ", ".join(result.invalid_codes),
         "llm_error": result.error,
@@ -82,12 +115,17 @@ def process_dataframe(
     checkpoint_path: str | Path | None = None,
     checkpoint_every: int = 250,
     concurrency: int = 8,
+    context_col: str | None = None,
+    codebook_lookup: dict[str, dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
     if text_col not in frame.columns:
         existing = ", ".join(map(str, frame.columns))
         raise ValueError(f"Missing text column {text_col!r}. Existing columns: {existing}")
     if concurrency < 1:
         raise ValueError("concurrency must be positive.")
+    if context_col and context_col not in frame.columns:
+        raise ValueError(f"Missing context column {context_col!r}.")
+    lookup = codebook_lookup or {}
 
     result = frame.copy()
     for column in OUTPUT_COLUMNS:
@@ -101,7 +139,7 @@ def process_dataframe(
         progress: tqdm[Any],
     ) -> None:
         nonlocal completed
-        for column, value in _result_columns(prediction).items():
+        for column, value in _result_columns(prediction, lookup).items():
             result.at[index, column] = value
         completed += 1
         progress.update(1)
@@ -119,8 +157,12 @@ def process_dataframe(
         ) as executor:
             futures: dict[Future[ClassificationResult], Any] = {}
             for index, row in result.iterrows():
-                answer = clean_text(row[text_col])
-                if not answer:
+                raw_answer = clean_text(row[text_col])
+                answer = combine_text(
+                    raw_answer,
+                    row[context_col] if context_col else None,
+                )
+                if not raw_answer:
                     record_prediction(index, _empty_result("empty_text"), progress)
                     continue
                 future = executor.submit(_classify_safely, classifier, answer)
@@ -142,7 +184,7 @@ def _run_statistics(
         lambda value: True if pd.isna(value) else bool(value)
     )
     return {
-        "n_rows": int(len(result)),
+        "input_rows": int(len(result)),
         "successful_rows": int(errors.eq("").sum()),
         "failed_rows": int(errors.ne("").sum()),
         "needs_review_rows": int(review_values.sum()),
@@ -173,7 +215,8 @@ def run_pipeline(
     api_key: str = "EMPTY",
     model: str | None = None,
     text_col: str = TEXT_COL_DEFAULT,
-    gold_col: str = CODES_COL_DEFAULT,
+    context_col: str | None = None,
+    gold_codes_col: str | None = None,
     csv_sep: str | None = None,
     timeout: float = 120.0,
     max_retries: int = 2,
@@ -184,8 +227,17 @@ def run_pipeline(
     enable_thinking: bool = False,
     checkpoint_every: int = 250,
     concurrency: int = 8,
+    max_labels: int = 6,
 ) -> tuple[Path, dict[str, Any]]:
     source = read_table(input_path, csv_sep=csv_sep)
+    required = [text_col]
+    if context_col:
+        required.append(context_col)
+    if gold_codes_col:
+        required.append(gold_codes_col)
+    missing = [column for column in required if column not in source.columns]
+    if missing:
+        raise ValueError(f"Missing columns: {missing}. Existing: {list(source.columns)}")
     codebook = parse_codebook(codebook_path)
     allowed_codes = assignable_codes(codebook)
     classifier = VLLMSurveyClassifier(
@@ -201,6 +253,7 @@ def run_pipeline(
         seed=seed,
         structured_output=structured_output,
         enable_thinking=enable_thinking,
+        max_labels=max_labels,
     )
     resolved_model = classifier.resolve_model()
 
@@ -212,6 +265,8 @@ def run_pipeline(
         checkpoint_path=output_path,
         checkpoint_every=checkpoint_every,
         concurrency=concurrency,
+        context_col=context_col,
+        codebook_lookup=codebook.set_index("code").to_dict(orient="index"),
     )
     wall_time_seconds = time.perf_counter() - started_at
     saved_output = write_table(result, output_path)
@@ -227,9 +282,13 @@ def run_pipeline(
     stats["enable_thinking"] = enable_thinking
 
     stats_path, per_class_path, errors_path = metrics_paths(output_path)
-    if gold_col in result.columns:
-        quality, per_class, errors = calculate_metrics(result, gold_col=gold_col)
-        stats["quality"] = quality
+    if gold_codes_col:
+        quality, per_class, errors = calculate_metrics(
+            result,
+            gold_codes_col=gold_codes_col,
+            known_codes=set(allowed_codes),
+        )
+        stats.update(quality)
         per_class.to_csv(per_class_path, index=False, encoding="utf-8-sig")
         errors.to_csv(errors_path, index=False, encoding="utf-8-sig")
 
@@ -249,7 +308,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--codebook-txt", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path)
     parser.add_argument(
         "--base-url",
         default=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:8000/v1"),
@@ -257,7 +316,8 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--api-key", default=os.getenv("OPENAI_API_KEY", "EMPTY"))
     parser.add_argument("--model", default=None)
     parser.add_argument("--text-col", default=TEXT_COL_DEFAULT)
-    parser.add_argument("--gold-col", default=CODES_COL_DEFAULT)
+    parser.add_argument("--context-col", default=None)
+    parser.add_argument("--gold-codes-col", default=None)
     parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-retries", type=int, default=2)
@@ -266,6 +326,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint-every", type=int, default=250)
     parser.add_argument("--concurrency", type=int, default=8)
+    parser.add_argument("--max-labels", type=int, default=6)
     parser.add_argument("--no-structured-output", action="store_true")
     parser.add_argument("--enable-thinking", action="store_true")
     args = parser.parse_args(argv)
@@ -273,12 +334,13 @@ def main(argv: list[str] | None = None) -> None:
     output_path, stats = run_pipeline(
         input_path=args.input,
         output_path=args.output,
-        codebook_path=args.codebook_txt,
+        codebook_path=args.codebook,
         base_url=args.base_url,
         api_key=args.api_key,
         model=args.model,
         text_col=args.text_col,
-        gold_col=args.gold_col,
+        context_col=args.context_col,
+        gold_codes_col=args.gold_codes_col,
         csv_sep=args.csv_sep,
         timeout=args.timeout,
         max_retries=args.max_retries,
@@ -289,6 +351,7 @@ def main(argv: list[str] | None = None) -> None:
         enable_thinking=args.enable_thinking,
         checkpoint_every=args.checkpoint_every,
         concurrency=args.concurrency,
+        max_labels=args.max_labels,
     )
     print(f"Saved predictions to {output_path}")
     print(json.dumps(stats, ensure_ascii=False, indent=2))
