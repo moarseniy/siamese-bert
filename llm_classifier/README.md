@@ -79,11 +79,16 @@ python scripts/predict.py \
 - ответ ограничен JSON Schema `{"codes":[...]}` с максимумом 6 кодов;
 - `temperature=0`;
 - при ошибке выполняется до двух повторов;
-- ответ ограничен 64 токенами;
+- без thinking ответ ограничен 64 токенами;
+- с thinking используется отдельный лимит `--thinking-max-tokens 1024`;
+- с thinking автоматически используются `temperature=0.6`, `top_p=0.95` и
+  `top_k=20`, отдельно от обычного `--temperature 0`;
 - каждые 250 завершённых строк сохраняется checkpoint в выходной файл.
 
-Thinking можно включить через `--enable-thinking`. Для старой версии vLLM без
-JSON Schema используйте `--no-structured-output`.
+Thinking можно включить через `--enable-thinking`. Если в `llm_error` указано,
+что reasoning закончился до финального JSON, увеличьте лимит, например
+`--thinking-max-tokens 2048`. Для старой версии vLLM без JSON Schema используйте
+`--no-structured-output`.
 
 ## Скорость
 

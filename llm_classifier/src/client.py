@@ -8,6 +8,10 @@ from typing import Any
 from .data_io import UNKNOWN_CODE, normalize_code
 
 
+class ThinkingOutputTruncatedError(ValueError):
+    """Raised when reasoning used the whole generation budget."""
+
+
 @dataclass
 class ClassificationResult:
     codes: list[str]
@@ -132,7 +136,11 @@ class VLLMSurveyClassifier:
         timeout: float = 120.0,
         max_retries: int = 2,
         max_tokens: int = 64,
+        thinking_max_tokens: int = 1024,
         temperature: float = 0.0,
+        thinking_temperature: float = 0.6,
+        thinking_top_p: float = 0.95,
+        thinking_top_k: int = 20,
         seed: int = 42,
         structured_output: bool = True,
         enable_thinking: bool = False,
@@ -146,8 +154,16 @@ class VLLMSurveyClassifier:
             raise ValueError("max_retries must be non-negative.")
         if max_tokens < 1:
             raise ValueError("max_tokens must be positive.")
+        if thinking_max_tokens < 1:
+            raise ValueError("thinking_max_tokens must be positive.")
         if temperature < 0:
             raise ValueError("temperature must be non-negative.")
+        if thinking_temperature <= 0:
+            raise ValueError("thinking_temperature must be positive.")
+        if not 0 < thinking_top_p <= 1:
+            raise ValueError("thinking_top_p must be in (0, 1].")
+        if thinking_top_k < 1:
+            raise ValueError("thinking_top_k must be positive.")
         if max_labels < 1:
             raise ValueError("max_labels must be positive.")
         self.client = OpenAI(
@@ -166,7 +182,11 @@ class VLLMSurveyClassifier:
         self.schema = classification_schema(allowed_codes, max_labels=max_labels)
         self.max_retries = max_retries
         self.max_tokens = max_tokens
+        self.thinking_max_tokens = thinking_max_tokens
         self.temperature = temperature
+        self.thinking_temperature = thinking_temperature
+        self.thinking_top_p = thinking_top_p
+        self.thinking_top_k = thinking_top_k
         self.seed = seed
         self.structured_output = structured_output
         self.enable_thinking = enable_thinking
@@ -192,8 +212,16 @@ class VLLMSurveyClassifier:
                         {"role": "system", "content": self.system_prompt},
                         {"role": "user", "content": build_user_prompt(answer)},
                     ],
-                    "temperature": self.temperature,
-                    "max_tokens": self.max_tokens,
+                    "temperature": (
+                        self.thinking_temperature
+                        if self.enable_thinking
+                        else self.temperature
+                    ),
+                    "max_tokens": (
+                        self.thinking_max_tokens
+                        if self.enable_thinking
+                        else self.max_tokens
+                    ),
                     "seed": self.seed,
                     "extra_body": {
                         "chat_template_kwargs": {
@@ -201,6 +229,9 @@ class VLLMSurveyClassifier:
                         }
                     },
                 }
+                if self.enable_thinking:
+                    request["top_p"] = self.thinking_top_p
+                    request["extra_body"]["top_k"] = self.thinking_top_k
                 if self.structured_output:
                     request["response_format"] = {
                         "type": "json_schema",
@@ -211,7 +242,23 @@ class VLLMSurveyClassifier:
                     }
 
                 response = self.client.chat.completions.create(**request)
-                raw_response = response.choices[0].message.content or ""
+                choice = response.choices[0]
+                message = choice.message
+                raw_response = message.content or ""
+                if not raw_response.strip():
+                    reasoning = getattr(message, "reasoning_content", "") or ""
+                    finish_reason = str(getattr(choice, "finish_reason", "") or "")
+                    if reasoning:
+                        raise ThinkingOutputTruncatedError(
+                            "Thinking output ended before the final JSON "
+                            f"(finish_reason={finish_reason or 'unknown'}, "
+                            f"reasoning_chars={len(reasoning)}). Increase "
+                            "--thinking-max-tokens or disable --enable-thinking."
+                        )
+                    raise ValueError(
+                        "Model returned empty final content. Check that vLLM was "
+                        "started with --reasoning-parser qwen3."
+                    )
                 codes, needs_review, invalid = parse_classification(
                     raw_response,
                     allowed_codes=self.allowed_codes,
@@ -230,6 +277,8 @@ class VLLMSurveyClassifier:
                 )
             except Exception as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, ThinkingOutputTruncatedError):
+                    break
                 if attempt < self.max_retries:
                     time.sleep(min(2**attempt, 4))
 

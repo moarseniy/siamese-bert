@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
-from llm_classifier.src.client import parse_classification
+from llm_classifier.src.client import VLLMSurveyClassifier, parse_classification
 from llm_classifier.src.pipeline import run_pipeline
 
 
@@ -58,9 +58,42 @@ class FakeOpenAI:
         )
 
 
+class TruncatedCompletions:
+    requests: list[dict[str, object]] = []
+
+    def create(self, **request: object) -> object:
+        type(self).requests.append(request)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content=None,
+                        reasoning_content="длинное рассуждение",
+                    ),
+                    finish_reason="length",
+                )
+            ],
+            usage=SimpleNamespace(prompt_tokens=100, completion_tokens=777),
+        )
+
+
+class TruncatedOpenAI:
+    def __init__(self, **_: object) -> None:
+        self.chat = SimpleNamespace(completions=TruncatedCompletions())
+        self.models = SimpleNamespace(
+            list=lambda: SimpleNamespace(data=[SimpleNamespace(id="Qwen/test")])
+        )
+
+
 def fake_openai_module() -> ModuleType:
     module = ModuleType("openai")
     module.OpenAI = FakeOpenAI
+    return module
+
+
+def truncated_openai_module() -> ModuleType:
+    module = ModuleType("openai")
+    module.OpenAI = TruncatedOpenAI
     return module
 
 
@@ -69,6 +102,7 @@ class LLMPipelineTests(unittest.TestCase):
         FakeCompletions.requests = []
         FakeCompletions.active_requests = 0
         FakeCompletions.max_active_requests = 0
+        TruncatedCompletions.requests = []
 
     def test_parser_rejects_invented_codes_and_marks_review(self) -> None:
         codes, review, invalid = parse_classification(
@@ -79,6 +113,32 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(codes, ["A1"])
         self.assertTrue(review)
         self.assertEqual(invalid, ["ZZ9"])
+
+    def test_thinking_uses_separate_budget_and_reports_truncation(self) -> None:
+        with patch.dict(sys.modules, {"openai": truncated_openai_module()}):
+            classifier = VLLMSurveyClassifier(
+                base_url="http://127.0.0.1:8000/v1",
+                api_key="EMPTY",
+                model="Qwen/test",
+                codebook_text="A1. Зарплата",
+                allowed_codes=["A1"],
+                max_retries=2,
+                max_tokens=64,
+                thinking_max_tokens=777,
+                enable_thinking=True,
+            )
+            result = classifier.classify("низкая зарплата")
+
+        self.assertEqual(len(TruncatedCompletions.requests), 1)
+        self.assertEqual(TruncatedCompletions.requests[0]["max_tokens"], 777)
+        self.assertEqual(TruncatedCompletions.requests[0]["temperature"], 0.6)
+        self.assertEqual(TruncatedCompletions.requests[0]["top_p"], 0.95)
+        self.assertEqual(
+            TruncatedCompletions.requests[0]["extra_body"]["top_k"],
+            20,
+        )
+        self.assertIn("ThinkingOutputTruncatedError", result.error)
+        self.assertIn("--thinking-max-tokens", result.error)
 
     def test_concurrent_pipeline_preserves_order_and_calculates_statistics(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

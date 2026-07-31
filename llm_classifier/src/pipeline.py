@@ -221,7 +221,11 @@ def run_pipeline(
     timeout: float = 120.0,
     max_retries: int = 2,
     max_tokens: int = 64,
+    thinking_max_tokens: int = 1024,
     temperature: float = 0.0,
+    thinking_temperature: float = 0.6,
+    thinking_top_p: float = 0.95,
+    thinking_top_k: int = 20,
     seed: int = 42,
     structured_output: bool = True,
     enable_thinking: bool = False,
@@ -249,7 +253,11 @@ def run_pipeline(
         timeout=timeout,
         max_retries=max_retries,
         max_tokens=max_tokens,
+        thinking_max_tokens=thinking_max_tokens,
         temperature=temperature,
+        thinking_temperature=thinking_temperature,
+        thinking_top_p=thinking_top_p,
+        thinking_top_k=thinking_top_k,
         seed=seed,
         structured_output=structured_output,
         enable_thinking=enable_thinking,
@@ -280,6 +288,12 @@ def run_pipeline(
     stats["base_url"] = base_url
     stats["structured_output"] = structured_output
     stats["enable_thinking"] = enable_thinking
+    stats["max_tokens"] = max_tokens
+    stats["thinking_max_tokens"] = thinking_max_tokens
+    stats["temperature"] = temperature
+    stats["thinking_temperature"] = thinking_temperature
+    stats["thinking_top_p"] = thinking_top_p
+    stats["thinking_top_k"] = thinking_top_k
 
     stats_path, per_class_path, errors_path = metrics_paths(output_path)
     if gold_codes_col:
@@ -322,7 +336,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-retries", type=int, default=2)
     parser.add_argument("--max-tokens", type=int, default=64)
+    parser.add_argument("--thinking-max-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.0)
+    parser.add_argument("--thinking-temperature", type=float, default=0.6)
+    parser.add_argument("--thinking-top-p", type=float, default=0.95)
+    parser.add_argument("--thinking-top-k", type=int, default=20)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint-every", type=int, default=250)
     parser.add_argument("--concurrency", type=int, default=8)
@@ -345,7 +363,11 @@ def main(argv: list[str] | None = None) -> None:
         timeout=args.timeout,
         max_retries=args.max_retries,
         max_tokens=args.max_tokens,
+        thinking_max_tokens=args.thinking_max_tokens,
         temperature=args.temperature,
+        thinking_temperature=args.thinking_temperature,
+        thinking_top_p=args.thinking_top_p,
+        thinking_top_k=args.thinking_top_k,
         seed=args.seed,
         structured_output=not args.no_structured_output,
         enable_thinking=args.enable_thinking,
