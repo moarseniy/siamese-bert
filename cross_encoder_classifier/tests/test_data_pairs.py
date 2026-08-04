@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from cross_encoder_classifier.src.data_io import (
+    build_pairs,
+    load_labeled_data,
+    parse_annotations,
+    parse_codebook,
+    split_train_val_test,
+)
+
+
+def _write_codebook(path: Path) -> None:
+    path.write_text(
+        "\n".join(
+            [
+                "A. Условия труда",
+                "A1. Уровень заработной платы и соответствие рынку",
+                "A2. Рабочее место и оборудование",
+                "B. Команда",
+                "B1. Атмосфера и отношения в коллективе",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_annotations_support_aligned_and_inline_formats() -> None:
+    assert parse_annotations("А1, B1", "2, 0") == [("A1", 2), ("B1", 0)]
+    assert parse_annotations("A1:2; B1=positive") == [("A1", 2), ("B1", 1)]
+    assert parse_annotations("UNKNOWN", None) == []
+    assert parse_annotations("A1", 2.0) == [("A1", 2)]
+    with pytest.raises(ValueError, match="equal item counts"):
+        parse_annotations("A1, B1", "2")
+    with pytest.raises(ValueError, match="Sentiment is missing"):
+        parse_annotations("A1, B1")
+
+
+def test_loading_and_pair_generation(tmp_path: Path) -> None:
+    codebook_path = tmp_path / "codes.txt"
+    source_path = tmp_path / "answers.csv"
+    _write_codebook(codebook_path)
+    pd.DataFrame(
+        {
+            "Ответ": [
+                "Зарплата низкая, но коллектив отличный.",
+                "Нормальное рабочее место.",
+                "Ничего не могу сказать.",
+            ],
+            "Коды_новые": ["A1, B1", "A2", "UNKNOWN"],
+            "Тональности": ["2, 1", "0", ""],
+        }
+    ).to_csv(source_path, index=False, encoding="utf-8-sig")
+
+    data, codebook = load_labeled_data(source_path, codebook_path)
+    assert len(data) == 3
+    assert data.iloc[0]["annotations"] == [("A1", 2), ("B1", 1)]
+
+    all_pairs = build_pairs(data.iloc[[0]], codebook, negative_ratio=None)
+    assert all_pairs["code"].tolist() == ["A1", "A2", "B1"]
+    assert all_pairs["label"].tolist() == [3, 0, 2]
+
+    sampled = build_pairs(data.iloc[[1]], codebook, negative_ratio=1.0, seed=42)
+    assert len(sampled) == 2
+    assert (sampled["label"] == 0).sum() == 1
+    assert (sampled["label"] == 1).sum() == 1
+
+
+def test_split_happens_before_pairs_and_is_deterministic(tmp_path: Path) -> None:
+    codebook_path = tmp_path / "codes.txt"
+    _write_codebook(codebook_path)
+    codebook = parse_codebook(codebook_path)
+    annotations = [[("A1", 0)], [("A2", 1)], [("B1", 2)], [("A1", 2)]]
+    rows = []
+    for index in range(40):
+        values = annotations[index % len(annotations)]
+        rows.append(
+            {
+                "row_id": index,
+                "text": f"Ответ {index}",
+                "answer": f"Ответ {index}",
+                "context": "",
+                "codes": [code for code, _ in values],
+                "annotations": values,
+            }
+        )
+    frame = pd.DataFrame(rows)
+    first = split_train_val_test(frame, val_size=0.2, test_size=0.2, seed=42)
+    second = split_train_val_test(frame, val_size=0.2, test_size=0.2, seed=42)
+    first_ids = {name: set(part["row_id"]) for name, part in first.items()}
+    second_ids = {name: set(part["row_id"]) for name, part in second.items()}
+    assert first_ids == second_ids
+    assert first_ids["train"].isdisjoint(first_ids["val"])
+    assert first_ids["train"].isdisjoint(first_ids["test"])
+    assert first_ids["val"].isdisjoint(first_ids["test"])
+
+    split_pairs = {
+        name: build_pairs(part, codebook, negative_ratio=None)
+        for name, part in first.items()
+    }
+    pair_ids = {name: set(part["row_id"]) for name, part in split_pairs.items()}
+    assert pair_ids == first_ids

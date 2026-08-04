@@ -10,12 +10,14 @@ TRAIN_SCRIPTS = [
     ROOT / "survey_classifier/scripts/train.py",
     ROOT / "bert_classifier/scripts/train.py",
     ROOT / "tfidf_classifier/scripts/train.py",
+    ROOT / "cross_encoder_classifier/scripts/train.py",
 ]
 PREDICT_SCRIPTS = [
     ROOT / "survey_classifier/scripts/predict.py",
     ROOT / "bert_classifier/scripts/predict.py",
     ROOT / "tfidf_classifier/scripts/predict.py",
     ROOT / "llm_classifier/scripts/predict.py",
+    ROOT / "cross_encoder_classifier/scripts/predict.py",
 ]
 
 

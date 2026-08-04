@@ -1,6 +1,6 @@
 # Survey Classification Pipelines
 
-В репозитории находятся четыре независимых подхода:
+В репозитории находятся пять независимых подходов:
 
 - [`survey_classifier/`](survey_classifier/) - sentence-transformers, поиск по
   историческим примерам и центроидам;
@@ -10,6 +10,9 @@
   классификация через RuBERT без embedding-индекса;
 - [`tfidf_classifier/`](tfidf_classifier/) - быстрый CPU baseline на словных и
   символьных TF-IDF-признаках с Logistic Regression.
+- [`cross_encoder_classifier/`](cross_encoder_classifier/) - парный Transformer,
+  который для каждой пары «ответ + описание кода» определяет наличие кода и
+  его тональность.
 
 Команды и форматы данных описаны в README каждой директории.
 
@@ -17,7 +20,8 @@
 
 Общие ключи называются одинаково во всех реализациях.
 
-Обучение для `survey_classifier`, `bert_classifier` и `tfidf_classifier`:
+Обучение для `survey_classifier`, `bert_classifier`, `tfidf_classifier` и
+`cross_encoder_classifier`:
 
 ```bash
 python scripts/train.py \
@@ -32,7 +36,7 @@ python scripts/train.py \
   --seed 42
 ```
 
-Инференс во всех четырех папках запускается через `scripts/predict.py`:
+Инференс во всех пяти папках запускается через `scripts/predict.py`:
 
 ```bash
 python scripts/predict.py \
@@ -49,11 +53,18 @@ python scripts/predict.py \
 `--training-mode`, `--device`, `--concurrency` или `--classifier-c`, остаются
 специфичными.
 
+У cross-encoder дополнительно используются `--sentiments-col` при обучении и
+`--gold-sentiments-col` при оценке. Через `--codebook` на инференсе ему можно
+передать измененный справочник без переобучения.
+
 Общие выходные колонки:
 
 - `predicted_codes`, `predicted_names`;
 - `predicted_parent_codes`, `predicted_parent_names`;
 - `confidence`, `margin`, `top_candidates`, `needs_review`.
+
+Cross-encoder также добавляет `predicted_sentiments`,
+`predicted_code_sentiments` и `predicted_sentiment_names`.
 
 При `--gold-codes-col` рядом с результатом создаются одинаково названные
 `<output>_stats.json`, `<output>_per_class.csv` и `<output>_errors.csv`.
