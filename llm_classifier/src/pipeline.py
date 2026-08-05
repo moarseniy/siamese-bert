@@ -32,6 +32,9 @@ OUTPUT_COLUMNS = [
     "predicted_names",
     "predicted_parent_codes",
     "predicted_parent_names",
+    "predicted_sentiments",
+    "predicted_code_sentiments",
+    "predicted_sentiment_names",
     "confidence",
     "margin",
     "top_candidates",
@@ -43,6 +46,8 @@ OUTPUT_COLUMNS = [
     "completion_tokens",
     "raw_response",
 ]
+
+SENTIMENT_NAMES = {0: "нейтральная", 1: "позитивная", 2: "негативная"}
 
 
 def _result_columns(
@@ -72,9 +77,21 @@ def _result_columns(
         "predicted_names": "; ".join(names) or UNKNOWN_CODE,
         "predicted_parent_codes": ", ".join(parent_codes),
         "predicted_parent_names": "; ".join(parent_names),
+        "predicted_sentiments": ", ".join(
+            str(result.sentiments[code]) for code in codes
+        ),
+        "predicted_code_sentiments": (
+            ", ".join(f"{code}:{result.sentiments[code]}" for code in codes)
+            or UNKNOWN_CODE
+        ),
+        "predicted_sentiment_names": "; ".join(
+            f"{code}:{SENTIMENT_NAMES[result.sentiments[code]]}" for code in codes
+        ),
         "confidence": None,
         "margin": None,
-        "top_candidates": ", ".join(codes),
+        "top_candidates": ", ".join(
+            f"{code}:{result.sentiments[code]}" for code in codes
+        ),
         "needs_review": result.needs_review,
         "invalid_codes": ", ".join(result.invalid_codes),
         "llm_error": result.error,
@@ -88,6 +105,7 @@ def _result_columns(
 def _empty_result(reason: str) -> ClassificationResult:
     return ClassificationResult(
         codes=[UNKNOWN_CODE],
+        sentiments={},
         needs_review=True,
         invalid_codes=[],
         error=reason,
@@ -220,7 +238,7 @@ def run_pipeline(
     csv_sep: str | None = None,
     timeout: float = 120.0,
     max_retries: int = 2,
-    max_tokens: int = 64,
+    max_tokens: int = 128,
     thinking_max_tokens: int = 1024,
     temperature: float = 0.0,
     thinking_temperature: float = 0.6,
@@ -316,8 +334,8 @@ def run_pipeline(
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Classify survey answers through concurrent independent requests "
-            "to a vLLM OpenAI-compatible API."
+            "Classify survey codes and code-level sentiment through concurrent "
+            "independent requests to a vLLM OpenAI-compatible API."
         )
     )
     parser.add_argument("--input", required=True, type=Path)
@@ -331,11 +349,23 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default=None)
     parser.add_argument("--text-col", default=TEXT_COL_DEFAULT)
     parser.add_argument("--context-col", default=None)
-    parser.add_argument("--gold-codes-col", default=None)
+    parser.add_argument(
+        "--gold-codes-col",
+        default=None,
+        help=(
+            "Optional gold column with inline code/sentiment labels, for example "
+            "'E1:1, A3:0'. Enables quality metrics."
+        ),
+    )
     parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--max-retries", type=int, default=2)
-    parser.add_argument("--max-tokens", type=int, default=64)
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=128,
+        help="Maximum generated tokens when thinking is disabled.",
+    )
     parser.add_argument("--thinking-max-tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--thinking-temperature", type=float, default=0.6)
@@ -344,7 +374,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--checkpoint-every", type=int, default=250)
     parser.add_argument("--concurrency", type=int, default=8)
-    parser.add_argument("--max-labels", type=int, default=6)
+    parser.add_argument(
+        "--max-labels",
+        type=int,
+        default=6,
+        help="Maximum number of code/sentiment labels per answer.",
+    )
     parser.add_argument("--no-structured-output", action="store_true")
     parser.add_argument("--enable-thinking", action="store_true")
     args = parser.parse_args(argv)

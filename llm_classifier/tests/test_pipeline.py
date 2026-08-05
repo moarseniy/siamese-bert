@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from llm_classifier.src.client import VLLMSurveyClassifier, parse_classification
+from llm_classifier.src.metrics import calculate_metrics
 from llm_classifier.src.pipeline import run_pipeline
 
 
@@ -37,7 +38,7 @@ class FakeCompletions:
             code = "A1" if "зарплата" in answer_prompt else "B1"
             content = json.dumps(
                 {
-                    "codes": [code],
+                    "labels": [{"code": code, "sentiment": 2}],
                 },
                 ensure_ascii=False,
             )
@@ -105,14 +106,62 @@ class LLMPipelineTests(unittest.TestCase):
         TruncatedCompletions.requests = []
 
     def test_parser_rejects_invented_codes_and_marks_review(self) -> None:
-        codes, review, invalid = parse_classification(
-            '{"codes":["A1","ZZ9"]}',
+        codes, sentiments, review, invalid = parse_classification(
+            '{"labels":['
+            '{"code":"A1","sentiment":1},'
+            '{"code":"ZZ9","sentiment":2}]}',
             allowed_codes=["A1", "B1"],
         )
 
         self.assertEqual(codes, ["A1"])
+        self.assertEqual(sentiments, {"A1": 1})
         self.assertTrue(review)
         self.assertEqual(invalid, ["ZZ9"])
+
+    def test_parser_deduplicates_equal_labels_and_rejects_bad_sentiment(self) -> None:
+        codes, sentiments, review, invalid = parse_classification(
+            '{"labels":['
+            '{"code":"A1","sentiment":0},'
+            '{"code":"A1","sentiment":0},'
+            '{"code":"B1","sentiment":4}]}',
+            allowed_codes=["A1", "B1"],
+        )
+
+        self.assertEqual(codes, ["A1"])
+        self.assertEqual(sentiments, {"A1": 0})
+        self.assertTrue(review)
+        self.assertEqual(invalid, ["B1:4"])
+
+    def test_parser_maps_empty_labels_to_unknown(self) -> None:
+        codes, sentiments, review, invalid = parse_classification(
+            '{"labels":[]}',
+            allowed_codes=["A1", "B1"],
+        )
+
+        self.assertEqual(codes, ["UNKNOWN"])
+        self.assertEqual(sentiments, {})
+        self.assertTrue(review)
+        self.assertEqual(invalid, [])
+
+    def test_metrics_distinguish_code_match_from_sentiment_match(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "Коды_новые": ["A1:2"],
+                "predicted_code_sentiments": ["A1:1"],
+            }
+        )
+
+        metrics, per_class, errors = calculate_metrics(
+            frame,
+            gold_codes_col="Коды_новые",
+            known_codes={"A1"},
+        )
+
+        self.assertEqual(metrics["micro_f1"], 1.0)
+        self.assertEqual(metrics["joint_micro_f1"], 0.0)
+        self.assertEqual(metrics["gold_code_sentiment_accuracy"], 0.0)
+        self.assertEqual(per_class.iloc[0]["gold_code_sentiment_accuracy"], 0.0)
+        self.assertEqual(len(errors), 1)
 
     def test_thinking_uses_separate_budget_and_reports_truncation(self) -> None:
         with patch.dict(sys.modules, {"openai": truncated_openai_module()}):
@@ -148,8 +197,8 @@ class LLMPipelineTests(unittest.TestCase):
             codebook_path = root / "codes.csv"
             pd.DataFrame(
                 [
-                    {"Ответ": "низкая зарплата", "Коды_новые": "A1"},
-                    {"Ответ": "неудобный офис", "Коды_новые": "B1"},
+                    {"Ответ": "низкая зарплата", "Коды_новые": "A1:2"},
+                    {"Ответ": "неудобный офис", "Коды_новые": "B1:2"},
                     {"Ответ": "", "Коды_новые": "UNKNOWN"},
                 ]
             ).to_csv(input_path, index=False, encoding="utf-8-sig")
@@ -182,21 +231,32 @@ class LLMPipelineTests(unittest.TestCase):
         first_request = FakeCompletions.requests[0]
         self.assertIn("response_format", first_request)
         schema = first_request["response_format"]["json_schema"]["schema"]
-        self.assertEqual(set(schema["properties"]), {"codes"})
-        self.assertEqual(schema["properties"]["codes"]["maxItems"], 6)
-        self.assertNotIn("uniqueItems", schema["properties"]["codes"])
-        self.assertEqual(first_request["max_tokens"], 64)
+        self.assertEqual(set(schema["properties"]), {"labels"})
+        labels_schema = schema["properties"]["labels"]
+        self.assertEqual(labels_schema["maxItems"], 6)
+        self.assertNotIn("uniqueItems", labels_schema)
+        self.assertEqual(
+            set(labels_schema["items"]["properties"]), {"code", "sentiment"}
+        )
+        self.assertEqual(first_request["max_tokens"], 128)
         self.assertEqual(
             first_request["extra_body"]["chat_template_kwargs"]["enable_thinking"],
             False,
         )
         self.assertEqual(result["predicted_codes"].tolist(), ["A1", "B1", "UNKNOWN"])
+        self.assertEqual(
+            result["predicted_code_sentiments"].tolist(),
+            ["A1:2", "B1:2", "UNKNOWN"],
+        )
+        self.assertEqual(result["predicted_sentiments"].iloc[:2].tolist(), [2.0, 2.0])
         self.assertIn("confidence", result.columns)
         self.assertIn("predicted_names", result.columns)
         self.assertIn("predicted_parent_codes", result.columns)
         self.assertIn("predicted_parent_names", result.columns)
         self.assertNotIn("explanation", result.columns)
         self.assertEqual(stats["micro_f1"], 1.0)
+        self.assertEqual(stats["joint_micro_f1"], 1.0)
+        self.assertEqual(stats["gold_code_sentiment_accuracy"], 1.0)
         self.assertEqual(stats["evaluated_rows"], 2)
         self.assertEqual(stats["failed_rows"], 1)
         self.assertEqual(stats["concurrency"], 8)

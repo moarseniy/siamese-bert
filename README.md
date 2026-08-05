@@ -4,8 +4,8 @@
 
 - [`survey_classifier/`](survey_classifier/) - sentence-transformers, поиск по
   историческим примерам и центроидам;
-- [`llm_classifier/`](llm_classifier/) - классификация через OpenAI-совместимый
-  API поднятого в vLLM Qwen;
+- [`llm_classifier/`](llm_classifier/) - классификация кодов и тональности через
+  OpenAI-совместимый API поднятого в vLLM Qwen;
 - [`bert_classifier/`](bert_classifier/) - supervised multi-label
   классификация через RuBERT без embedding-индекса;
 - [`tfidf_classifier/`](tfidf_classifier/) - быстрый CPU baseline на словных и
@@ -67,7 +67,7 @@ python scripts/predict.py \
 - `predicted_parent_codes`, `predicted_parent_names`;
 - `confidence`, `margin`, `top_candidates`, `needs_review`.
 
-Cross-encoder также добавляет `predicted_sentiments`,
+Cross-encoder и LLM-классификатор также добавляют `predicted_sentiments`,
 `predicted_code_sentiments` и `predicted_sentiment_names`.
 
 При `--gold-codes-col` рядом с результатом создаются одинаково названные

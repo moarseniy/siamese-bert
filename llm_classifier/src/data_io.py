@@ -69,6 +69,29 @@ def split_codes(value: Any) -> list[str]:
     return result
 
 
+def parse_code_sentiments(value: Any) -> dict[str, int]:
+    """Parse inline labels such as ``E1:1, A3:0``."""
+    if is_missing(value):
+        return {}
+    normalized_separators = re.sub(r"[;\n\r]+", ",", str(value))
+    labels: dict[str, int] = {}
+    for raw_item in normalized_separators.split(","):
+        item = raw_item.strip()
+        if not item or normalize_code(item) == UNKNOWN_CODE:
+            continue
+        match = re.match(r"^(.+?)\s*[:=|]\s*([012])\s*$", item)
+        if not match:
+            raise ValueError(
+                f"Invalid code/sentiment label {item!r}; expected format E1:1."
+            )
+        code = normalize_code(match.group(1))
+        sentiment = int(match.group(2))
+        if code in labels and labels[code] != sentiment:
+            raise ValueError(f"Code {code!r} has conflicting sentiments in one row.")
+        labels[code] = sentiment
+    return labels
+
+
 def parent_code(code: str) -> str:
     match = re.match(r"^([A-Z]+)", normalize_code(code))
     return match.group(1) if match else normalize_code(code)
