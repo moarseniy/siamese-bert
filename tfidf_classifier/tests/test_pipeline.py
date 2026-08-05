@@ -11,20 +11,14 @@ from tfidf_classifier.src.utils import read_json
 
 
 def _write_dataset(root: Path) -> tuple[Path, Path]:
-    codebook_path = root / "codes.txt"
-    codebook_path.write_text(
-        "\n".join(
-            [
-                "A. Финансы",
-                "A1. Зарплата",
-                "B. Условия",
-                "B1. Офис",
-                "C. Управление",
-                "C1. Руководитель",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    codebook_path = root / "codes.csv"
+    pd.DataFrame(
+        {
+            "Код": ["A1", "B1", "C1"],
+            "Категория": ["Финансы", "Условия", "Управление"],
+            "Подкатегория": ["Зарплата", "Офис", "Руководитель"],
+        }
+    ).to_csv(codebook_path, index=False, encoding="utf-8-sig")
     examples = {
         "A1": ["низкая зарплата", "маленький оклад", "хочу больше денег"],
         "B1": ["плохой офис", "неудобное рабочее место", "холодно в помещении"],

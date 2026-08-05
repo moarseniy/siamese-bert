@@ -23,7 +23,7 @@ def load_single_label_csv(
     input_csv: str | Path,
     text_col: str = TEXT_COL_DEFAULT,
     codes_col: str = CODES_COL_DEFAULT,
-    codebook_txt: str | Path | None = None,
+    codebook_path: str | Path | None = None,
     encoding: str = "utf-8-sig",
     sep: str | None = None,
 ) -> pd.DataFrame:
@@ -45,8 +45,8 @@ def load_single_label_csv(
         raise ValueError(f"Missing columns in {input_path}: {missing}. Existing columns: {existing}")
 
     codebook_by_code: dict[str, dict[str, object]] = {}
-    if codebook_txt is not None:
-        codebook = parse_codebook(codebook_txt)
+    if codebook_path is not None:
+        codebook = parse_codebook(codebook_path)
         codebook_by_code = codebook.set_index("code").to_dict(orient="index")
 
     records: list[dict[str, object]] = []
@@ -111,7 +111,7 @@ def visualize_csv(
     output_dir: str | Path,
     text_col: str = TEXT_COL_DEFAULT,
     codes_col: str = CODES_COL_DEFAULT,
-    codebook_txt: str | Path | None = None,
+    codebook_path: str | Path | None = None,
     method: str = "pca",
     color_by: str = "code",
     sample_size: int | None = 5000,
@@ -127,7 +127,7 @@ def visualize_csv(
         input_csv=input_csv,
         text_col=text_col,
         codes_col=codes_col,
-        codebook_txt=codebook_txt,
+        codebook_path=codebook_path,
         encoding=encoding,
         sep=sep,
     )
@@ -172,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output-dir", type=Path, default=Path("visualization"))
     parser.add_argument("--text-col", default=TEXT_COL_DEFAULT)
     parser.add_argument("--codes-col", default=CODES_COL_DEFAULT)
-    parser.add_argument("--codebook", type=Path, default=None)
+    parser.add_argument("--codebook", type=Path, default=None, help="Codebook CSV.")
     parser.add_argument("--method", choices=["pca", "tsne"], default="pca")
     parser.add_argument("--color-by", choices=["code", "parent_code"], default="code")
     parser.add_argument("--sample-size", type=int, default=5000)
@@ -196,7 +196,7 @@ def main(argv: list[str] | None = None) -> None:
         output_dir=args.output_dir,
         text_col=args.text_col,
         codes_col=args.codes_col,
-        codebook_txt=args.codebook,
+        codebook_path=args.codebook,
         method=args.method,
         color_by=args.color_by,
         sample_size=args.sample_size,

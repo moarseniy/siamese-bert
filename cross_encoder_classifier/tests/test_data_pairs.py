@@ -15,18 +15,17 @@ from cross_encoder_classifier.src.data_io import (
 
 
 def _write_codebook(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "A. Условия труда",
-                "A1. Уровень заработной платы и соответствие рынку",
-                "A2. Рабочее место и оборудование",
-                "B. Команда",
-                "B1. Атмосфера и отношения в коллективе",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    pd.DataFrame(
+        {
+            "Код": ["A1", "A2", "B1"],
+            "Категория": ["Условия труда", "Условия труда", "Команда"],
+            "Подкатегория": [
+                "Уровень заработной платы и соответствие рынку",
+                "Рабочее место и оборудование",
+                "Атмосфера и отношения в коллективе",
+            ],
+        }
+    ).to_csv(path, index=False, encoding="utf-8-sig")
 
 
 def test_annotations_support_aligned_and_inline_formats() -> None:
@@ -41,7 +40,7 @@ def test_annotations_support_aligned_and_inline_formats() -> None:
 
 
 def test_loading_and_pair_generation(tmp_path: Path) -> None:
-    codebook_path = tmp_path / "codes.txt"
+    codebook_path = tmp_path / "codes.csv"
     source_path = tmp_path / "answers.csv"
     _write_codebook(codebook_path)
     pd.DataFrame(
@@ -71,7 +70,7 @@ def test_loading_and_pair_generation(tmp_path: Path) -> None:
 
 
 def test_split_happens_before_pairs_and_is_deterministic(tmp_path: Path) -> None:
-    codebook_path = tmp_path / "codes.txt"
+    codebook_path = tmp_path / "codes.csv"
     _write_codebook(codebook_path)
     codebook = parse_codebook(codebook_path)
     annotations = [[("A1", 0)], [("A2", 1)], [("B1", 2)], [("A1", 2)]]

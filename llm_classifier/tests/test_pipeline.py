@@ -145,7 +145,7 @@ class LLMPipelineTests(unittest.TestCase):
             root = Path(temp_dir)
             input_path = root / "answers.csv"
             output_path = root / "predictions.csv"
-            codebook_path = root / "codes.txt"
+            codebook_path = root / "codes.csv"
             pd.DataFrame(
                 [
                     {"Ответ": "низкая зарплата", "Коды_новые": "A1"},
@@ -153,10 +153,13 @@ class LLMPipelineTests(unittest.TestCase):
                     {"Ответ": "", "Коды_новые": "UNKNOWN"},
                 ]
             ).to_csv(input_path, index=False, encoding="utf-8-sig")
-            codebook_path.write_text(
-                "A. Финансы\nA1. Зарплата\nB. Условия\nB1. Офис\n",
-                encoding="utf-8",
-            )
+            pd.DataFrame(
+                {
+                    "Код": ["A1", "B1"],
+                    "Категория": ["Финансы", "Условия"],
+                    "Подкатегория": ["Зарплата", "Офис"],
+                }
+            ).to_csv(codebook_path, index=False, encoding="utf-8-sig")
 
             with patch.dict(sys.modules, {"openai": fake_openai_module()}):
                 saved_path, stats = run_pipeline(

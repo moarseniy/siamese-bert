@@ -173,7 +173,7 @@ def build_index(
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Build production centroid/example index.")
     parser.add_argument("--train", required=True, type=Path)
-    parser.add_argument("--codebook", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path, help="Codebook CSV.")
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--model-dir", type=Path, default=None)
     parser.add_argument("--text-col", default="Ответ")

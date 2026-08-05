@@ -35,14 +35,16 @@ pip install -r requirements.txt
 | Маленькая зарплата | A1 |
 | Низкая зарплата и холодный офис | A1, B1 |
 
-TXT-справочник:
+CSV-справочник с обязательными колонками `Код`, `Категория`, `Подкатегория`:
 
-```text
-A. Финансы
-A1. Зарплата
-B. Условия труда
-B1. Рабочее место
+```csv
+Код,Категория,Подкатегория
+A1,Финансы,Зарплата
+B1,Условия труда,Рабочее место
 ```
+
+В справочнике перечисляются только конечные коды; отдельные строки `A`, `B`
+не нужны.
 
 Строки только с `UNKNOWN` не участвуют в обучении. Похожие кириллические буквы
 в кодах нормализуются, например `А1` превращается в `A1`.
@@ -52,7 +54,7 @@ B1. Рабочее место
 ```bash
 python scripts/train.py \
   --train data/train.xlsx \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --val-size 0.1 \
   --test-size 0.1 \
@@ -64,7 +66,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train data/train.csv \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out
 ```
 
@@ -73,7 +75,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train data/train.xlsx \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --context-col "Вопрос"
 ```

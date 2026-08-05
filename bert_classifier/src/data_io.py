@@ -72,28 +72,49 @@ def parse_codebook(path: str | Path) -> pd.DataFrame:
     source_path = Path(path)
     if not source_path.exists():
         raise FileNotFoundError(f"Codebook file not found: {source_path}")
+    if source_path.suffix.lower() != ".csv":
+        raise ValueError("Codebook must be a .csv file.")
+
+    source = pd.read_csv(
+        source_path,
+        sep=None,
+        engine="python",
+        encoding="utf-8-sig",
+        dtype=str,
+        keep_default_na=False,
+    )
+    source.columns = [str(column).strip() for column in source.columns]
+    required = ["Код", "Категория", "Подкатегория"]
+    missing = [column for column in required if column not in source.columns]
+    if missing:
+        raise ValueError(
+            f"Missing codebook columns: {missing}. Existing: {list(source.columns)}"
+        )
 
     records: list[dict[str, Any]] = []
-    for line_number, raw_line in enumerate(
-        source_path.read_text(encoding="utf-8-sig").splitlines(),
-        start=1,
-    ):
-        line = raw_line.strip()
-        if not line:
+    for row_number, row in source.iterrows():
+        code = normalize_code(row["Код"])
+        category = clean_text(row["Категория"])
+        subcategory = clean_text(row["Подкатегория"])
+        if not code and not category and not subcategory:
             continue
-        match = re.match(r"^([^.]+?)\.\s*(.+?)\s*$", line)
-        if not match:
-            raise ValueError(f"Invalid codebook line {line_number}: {raw_line!r}")
-        code = normalize_code(match.group(1))
-        name = match.group(2).strip()
-        if not code or not name:
-            raise ValueError(f"Invalid codebook line {line_number}: {raw_line!r}")
+        if not code or not category or not subcategory:
+            raise ValueError(
+                f"Invalid codebook row {row_number + 2}: Код, Категория and "
+                "Подкатегория must be non-empty."
+            )
+        parent = parent_code(code)
+        if parent == code:
+            raise ValueError(
+                f"Invalid leaf code {code!r} at codebook row {row_number + 2}."
+            )
         records.append(
             {
                 "code": code,
-                "name": name,
-                "parent_code": parent_code(code),
-                "is_parent": parent_code(code) == code,
+                "name": subcategory,
+                "parent_code": parent,
+                "parent_name": category,
+                "is_parent": False,
             }
         )
 
@@ -105,8 +126,13 @@ def parse_codebook(path: str | Path) -> pd.DataFrame:
     if not duplicates.empty:
         raise ValueError(f"Duplicate codes in codebook: {', '.join(duplicates.index)}")
 
-    name_by_code = frame.set_index("code")["name"].to_dict()
-    frame["parent_name"] = frame["parent_code"].map(name_by_code).fillna("")
+    category_counts = frame.groupby("parent_code")["parent_name"].nunique()
+    inconsistent = category_counts[category_counts > 1]
+    if not inconsistent.empty:
+        raise ValueError(
+            "Different Категория values for parent codes: "
+            + ", ".join(inconsistent.index)
+        )
     return frame[["code", "name", "parent_code", "parent_name", "is_parent"]]
 
 

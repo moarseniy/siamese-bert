@@ -26,13 +26,16 @@ pip install -r requirements.txt
 - `Ответ` - текст ответа;
 - `Коды_новые` - один или несколько кодов через запятую, например `A1, A2`.
 
-TXT-справочник:
+CSV-справочник с обязательными колонками `Код`, `Категория`, `Подкатегория`:
 
-```text
-А. Финансы
-А1. Зарплата
-А2. Премии
+```csv
+Код,Категория,Подкатегория
+A1,Финансы,Зарплата
+A2,Финансы,Премии
 ```
+
+Каждая строка содержит конечную подкатегорию. Отдельные строки `A. Финансы`
+не нужны. Разделитель CSV определяется автоматически.
 
 Коды нормализуются: пробелы удаляются, регистр приводится к верхнему, похожие кириллические буквы заменяются на латиницу (`А -> A`, `В -> B` и т.д.). Код `UNKNOWN` исключается из обучения и не становится обычной категорией.
 
@@ -41,7 +44,7 @@ TXT-справочник:
 ```bash
 python scripts/train.py \
   --train train.xlsx \
-  --codebook codes.txt \
+  --codebook codes.csv \
   --out-dir model_out \
   --training-mode contrastive \
   --epochs 1 \
@@ -59,7 +62,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train train.xlsx \
-  --codebook codes.txt \
+  --codebook codes.csv \
   --out-dir model_out_frida \
   --base-model ai-forever/FRIDA \
   --prompt-name categorize_topic \
@@ -87,7 +90,7 @@ python scripts/train.py \
 
 Pipeline делает четыре шага:
 
-1. Загружает Excel и TXT-справочник, разворачивает multi-label ответы в long-format.
+1. Загружает таблицу ответов и CSV-справочник, разворачивает multi-label ответы в long-format.
 2. Делит данные на `train` / `val` / `test` по `row_id`, чтобы строки одного multi-label ответа не попадали в разные split. По умолчанию используется `seed=42`.
 3. Дообучает siamese/bi-encoder модель выбранным режимом обучения.
 4. Строит production index: embeddings исторических ответов, metadata, центроиды подкатегорий, центроиды родительских категорий и codebook.
@@ -108,7 +111,7 @@ Pipeline делает четыре шага:
 ```bash
 python scripts/train.py \
   --train train.xlsx \
-  --codebook codes.txt \
+  --codebook codes.csv \
   --out-dir model_out \
   --training-mode mnrl
 ```
@@ -118,7 +121,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train train.xlsx \
-  --codebook codes.txt \
+  --codebook codes.csv \
   --out-dir model_out \
   --training-mode triplet \
   --max-triplets-per-code 5000 \
@@ -161,7 +164,7 @@ model_out/
 ```bash
 python -m src.build_index \
   --train train.xlsx \
-  --codebook codes.txt \
+  --codebook codes.csv \
   --out-dir model_out \
   --batch-size 64
 ```
@@ -171,7 +174,7 @@ python -m src.build_index \
 ```bash
 python -m src.build_index \
   --train train.xlsx \
-  --codebook codes.txt \
+  --codebook codes.csv \
   --out-dir model_out \
   --model-dir model_out/model
 ```
@@ -334,7 +337,7 @@ python scripts/visualize_csv.py \
 
 CSV-разделитель определяется автоматически. При необходимости его можно задать
 явно: `--csv-sep ';'`. Для раскраски по основной категории используйте
-`--color-by parent_code`. Опциональный `--codebook codes.txt` добавит в
+`--color-by parent_code`. Опциональный `--codebook codes.csv` добавит в
 подсказки названия категорий. По умолчанию строится быстрая PCA-визуализация;
 для t-SNE добавьте `--method tsne`.
 

@@ -63,8 +63,14 @@ def test_classifier_uses_common_prediction_columns() -> None:
 def test_training_loader_supports_common_csv_and_context_keys(
     tmp_path,
 ) -> None:
-    codebook_path = tmp_path / "codes.txt"
-    codebook_path.write_text("A. Финансы\nA1. Зарплата\n", encoding="utf-8")
+    codebook_path = tmp_path / "codes.csv"
+    pd.DataFrame(
+        {
+            "Код": ["A1"],
+            "Категория": ["Финансы"],
+            "Подкатегория": ["Зарплата"],
+        }
+    ).to_csv(codebook_path, index=False, encoding="utf-8-sig")
     input_path = tmp_path / "answers.csv"
     pd.DataFrame(
         {

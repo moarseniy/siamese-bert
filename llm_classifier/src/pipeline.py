@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument("--input", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
-    parser.add_argument("--codebook", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path, help="Codebook CSV.")
     parser.add_argument(
         "--base-url",
         default=os.getenv("OPENAI_BASE_URL", "http://127.0.0.1:8000/v1"),

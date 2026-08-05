@@ -35,15 +35,17 @@ CSV/XLSX для обучения:
 - Строки без текста и строки только с `UNKNOWN` не участвуют в обучении.
 - Опционально можно передать колонку с вопросом или другим контекстом.
 
-TXT-справочник:
+CSV-справочник с обязательными колонками `Код`, `Категория`, `Подкатегория`:
 
-```text
-A. Сервис
-A1. Скорость обслуживания
-A2. Вежливость сотрудников
-B. Продукт
-B1. Качество продукта
+```csv
+Код,Категория,Подкатегория
+A1,Сервис,Скорость обслуживания
+A2,Сервис,Вежливость сотрудников
+B1,Продукт,Качество продукта
 ```
+
+Каждая строка описывает конечный код. Строки только для основных категорий
+`A`, `B` добавлять не нужно.
 
 Похожие кириллические буквы в кодах нормализуются: например, `А1` станет `A1`.
 
@@ -54,7 +56,7 @@ B1. Качество продукта
 ```bash
 python scripts/train.py \
   --train data/train.csv \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --device cuda
 ```
@@ -64,7 +66,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train data/train.xlsx \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --epochs 3 \
   --batch-size 16 \
@@ -80,7 +82,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train data/train.xlsx \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --context-col "Вопрос" \
   --device cuda
@@ -91,7 +93,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train data/train.xlsx \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --base-model /path/to/rubert-base-cased \
   --device cuda
@@ -117,7 +119,7 @@ python scripts/train.py \
 ```bash
 python scripts/train.py \
   --train data/train.xlsx \
-  --codebook data/codes.txt \
+  --codebook data/codes.csv \
   --out-dir model_out \
   --batch-size 4 \
   --gradient-accumulation-steps 4 \

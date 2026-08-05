@@ -15,22 +15,21 @@ from bert_classifier.src.metrics import calculate_metrics, encode_labels, select
 
 
 def _write_codebook(path: Path) -> None:
-    path.write_text(
-        "\n".join(
-            [
-                "A. Сервис",
-                "A1. Скорость обслуживания",
-                "A2. Вежливость",
-                "B. Продукт",
-                "B1. Качество продукта",
-            ]
-        ),
-        encoding="utf-8",
-    )
+    pd.DataFrame(
+        {
+            "Код": ["A1", "A2", "B1"],
+            "Категория": ["Сервис", "Сервис", "Продукт"],
+            "Подкатегория": [
+                "Скорость обслуживания",
+                "Вежливость",
+                "Качество продукта",
+            ],
+        }
+    ).to_csv(path, index=False, encoding="utf-8-sig")
 
 
 def test_codebook_and_code_normalization(tmp_path: Path) -> None:
-    codebook_path = tmp_path / "codes.txt"
+    codebook_path = tmp_path / "codes.csv"
     _write_codebook(codebook_path)
 
     codebook = parse_codebook(codebook_path)
@@ -41,7 +40,7 @@ def test_codebook_and_code_normalization(tmp_path: Path) -> None:
 
 
 def test_load_labeled_data_preserves_multilabel_and_context(tmp_path: Path) -> None:
-    codebook_path = tmp_path / "codes.txt"
+    codebook_path = tmp_path / "codes.csv"
     source_path = tmp_path / "answers.csv"
     _write_codebook(codebook_path)
     pd.DataFrame(

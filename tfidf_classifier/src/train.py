@@ -12,7 +12,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Train a standalone multi-label TF-IDF survey classifier."
     )
     parser.add_argument("--train", required=True, type=Path)
-    parser.add_argument("--codebook", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path, help="Codebook CSV.")
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--text-col", default="Ответ")
     parser.add_argument("--codes-col", default="Коды_новые")

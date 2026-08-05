@@ -18,7 +18,7 @@ from src.utils import read_json
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Train model and build production index.")
     parser.add_argument("--train", required=True, type=Path)
-    parser.add_argument("--codebook", required=True, type=Path)
+    parser.add_argument("--codebook", required=True, type=Path, help="Codebook CSV.")
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--text-col", default="Ответ")
     parser.add_argument("--codes-col", default="Коды_новые")

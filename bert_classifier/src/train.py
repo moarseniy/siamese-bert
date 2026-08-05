@@ -605,7 +605,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Fine-tune RuBERT for multi-label survey response classification."
     )
     parser.add_argument("--train", required=True, type=Path, help="CSV/XLSX with labels.")
-    parser.add_argument("--codebook", required=True, type=Path, help="Codebook TXT.")
+    parser.add_argument("--codebook", required=True, type=Path, help="Codebook CSV.")
     parser.add_argument("--out-dir", required=True, type=Path)
     parser.add_argument("--base-model", default=DEFAULT_BASE_MODEL)
     parser.add_argument("--text-col", default="Ответ")
