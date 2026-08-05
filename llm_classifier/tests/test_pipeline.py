@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from llm_classifier.src.client import VLLMSurveyClassifier, parse_classification
+from llm_classifier.src.evaluate import evaluate_predictions
 from llm_classifier.src.metrics import calculate_metrics
 from llm_classifier.src.pipeline import run_pipeline
 
@@ -36,12 +37,10 @@ class FakeCompletions:
             messages = request["messages"]
             answer_prompt = messages[1]["content"]
             code = "A1" if "зарплата" in answer_prompt else "B1"
-            content = json.dumps(
-                {
-                    "labels": [{"code": code, "sentiment": 2}],
-                },
-                ensure_ascii=False,
-            )
+            labels = [{"code": code, "sentiment": 2}]
+            if code == "A1":
+                labels.insert(0, {"code": code, "sentiment": 1})
+            content = json.dumps({"labels": labels}, ensure_ascii=False)
             return SimpleNamespace(
                 choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
                 usage=SimpleNamespace(prompt_tokens=100, completion_tokens=20),
@@ -114,7 +113,7 @@ class LLMPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(codes, ["A1"])
-        self.assertEqual(sentiments, {"A1": 1})
+        self.assertEqual(sentiments, [1])
         self.assertTrue(review)
         self.assertEqual(invalid, ["ZZ9"])
 
@@ -128,9 +127,22 @@ class LLMPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(codes, ["A1"])
-        self.assertEqual(sentiments, {"A1": 0})
+        self.assertEqual(sentiments, [0])
         self.assertTrue(review)
         self.assertEqual(invalid, ["B1:4"])
+
+    def test_parser_accepts_different_sentiments_for_the_same_code(self) -> None:
+        codes, sentiments, review, invalid = parse_classification(
+            '{"labels":['
+            '{"code":"I4","sentiment":1},'
+            '{"code":"I4","sentiment":2}]}',
+            allowed_codes=["I4"],
+        )
+
+        self.assertEqual(codes, ["I4", "I4"])
+        self.assertEqual(sentiments, [1, 2])
+        self.assertFalse(review)
+        self.assertEqual(invalid, [])
 
     def test_parser_maps_empty_labels_to_unknown(self) -> None:
         codes, sentiments, review, invalid = parse_classification(
@@ -139,7 +151,7 @@ class LLMPipelineTests(unittest.TestCase):
         )
 
         self.assertEqual(codes, ["UNKNOWN"])
-        self.assertEqual(sentiments, {})
+        self.assertEqual(sentiments, [])
         self.assertTrue(review)
         self.assertEqual(invalid, [])
 
@@ -161,6 +173,28 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(metrics["joint_micro_f1"], 0.0)
         self.assertEqual(metrics["gold_code_sentiment_accuracy"], 0.0)
         self.assertEqual(per_class.iloc[0]["gold_code_sentiment_accuracy"], 0.0)
+        self.assertEqual(len(errors), 1)
+
+    def test_metrics_support_multiple_sentiments_for_one_code(self) -> None:
+        frame = pd.DataFrame(
+            {
+                "Коды_новые": ["I4:1, I4:2"],
+                "predicted_code_sentiments": ["I4:1"],
+            }
+        )
+
+        metrics, _, errors = calculate_metrics(
+            frame,
+            gold_codes_col="Коды_новые",
+            known_codes={"I4"},
+        )
+
+        self.assertEqual(metrics["micro_f1"], 1.0)
+        self.assertAlmostEqual(metrics["joint_micro_recall"], 0.5)
+        self.assertAlmostEqual(metrics["joint_micro_f1"], 2 / 3)
+        self.assertEqual(metrics["gold_code_sentiment_accuracy"], 0.5)
+        self.assertEqual(metrics["gold_codes"], 1)
+        self.assertEqual(metrics["gold_code_sentiment_pairs"], 2)
         self.assertEqual(len(errors), 1)
 
     def test_thinking_uses_separate_budget_and_reports_truncation(self) -> None:
@@ -197,7 +231,10 @@ class LLMPipelineTests(unittest.TestCase):
             codebook_path = root / "codes.csv"
             pd.DataFrame(
                 [
-                    {"Ответ": "низкая зарплата", "Коды_новые": "A1:2"},
+                    {
+                        "Ответ": "зарплата нравится, но иногда низкая",
+                        "Коды_новые": "A1:1, A1:2",
+                    },
                     {"Ответ": "неудобный офис", "Коды_новые": "B1:2"},
                     {"Ответ": "", "Коды_новые": "UNKNOWN"},
                 ]
@@ -243,12 +280,16 @@ class LLMPipelineTests(unittest.TestCase):
             first_request["extra_body"]["chat_template_kwargs"]["enable_thinking"],
             False,
         )
-        self.assertEqual(result["predicted_codes"].tolist(), ["A1", "B1", "UNKNOWN"])
+        self.assertEqual(
+            result["predicted_codes"].tolist(),
+            ["A1, A1", "B1", "UNKNOWN"],
+        )
         self.assertEqual(
             result["predicted_code_sentiments"].tolist(),
-            ["A1:2", "B1:2", "UNKNOWN"],
+            ["A1:1, A1:2", "B1:2", "UNKNOWN"],
         )
-        self.assertEqual(result["predicted_sentiments"].iloc[:2].tolist(), [2.0, 2.0])
+        self.assertEqual(result.loc[0, "predicted_sentiments"], "1, 2")
+        self.assertEqual(str(result.loc[1, "predicted_sentiments"]), "2")
         self.assertIn("confidence", result.columns)
         self.assertIn("predicted_names", result.columns)
         self.assertIn("predicted_parent_codes", result.columns)
@@ -257,12 +298,43 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(stats["micro_f1"], 1.0)
         self.assertEqual(stats["joint_micro_f1"], 1.0)
         self.assertEqual(stats["gold_code_sentiment_accuracy"], 1.0)
+        self.assertEqual(stats["gold_codes"], 2)
+        self.assertEqual(stats["gold_code_sentiment_pairs"], 3)
         self.assertEqual(stats["evaluated_rows"], 2)
         self.assertEqual(stats["failed_rows"], 1)
         self.assertEqual(stats["concurrency"], 8)
         self.assertGreater(stats["throughput_rows_per_second"], 0)
         self.assertTrue(stats_exists)
         self.assertTrue(per_class_exists)
+
+    def test_evaluate_saved_predictions_without_inference(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            predictions_path = root / "predictions.csv"
+            codebook_path = root / "codes.csv"
+            pd.DataFrame(
+                {
+                    "Коды_новые": ["I4:1, I4:2"],
+                    "predicted_code_sentiments": ["I4:1, I4:2"],
+                }
+            ).to_csv(predictions_path, index=False, encoding="utf-8-sig")
+            pd.DataFrame(
+                {
+                    "Код": ["I4"],
+                    "Категория": ["Общее"],
+                    "Подкатегория": ["Общее впечатление"],
+                }
+            ).to_csv(codebook_path, index=False, encoding="utf-8-sig")
+
+            stats, stats_path, per_class_path, errors_path = evaluate_predictions(
+                predictions_path,
+                codebook_path,
+            )
+
+            self.assertEqual(stats["joint_micro_f1"], 1.0)
+            self.assertTrue(stats_path.exists())
+            self.assertTrue(per_class_path.exists())
+            self.assertTrue(errors_path.exists())
 
 
 if __name__ == "__main__":

@@ -20,8 +20,11 @@ def calculate_metrics(
     if prediction_col not in frame.columns:
         raise ValueError(f"Prediction column {prediction_col!r} is absent.")
 
-    def parse_values(values: pd.Series, column: str) -> list[dict[str, int]]:
-        parsed: list[dict[str, int]] = []
+    def parse_values(
+        values: pd.Series,
+        column: str,
+    ) -> list[list[tuple[str, int]]]:
+        parsed: list[list[tuple[str, int]]] = []
         for row_position, value in enumerate(values):
             try:
                 labels = parse_code_sentiments(value)
@@ -31,24 +34,24 @@ def calculate_metrics(
                     f"source row {row_position + 2}: {exc}"
                 ) from exc
             parsed.append(
-                {
-                    code: sentiment
-                    for code, sentiment in labels.items()
+                [
+                    (code, sentiment)
+                    for code, sentiment in labels
                     if code in known_codes
-                }
+                ]
             )
         return parsed
 
-    gold_maps = parse_values(frame[gold_codes_col], gold_codes_col)
-    prediction_maps = parse_values(frame[prediction_col], prediction_col)
-    valid_mask = np.asarray([bool(values) for values in gold_maps], dtype=bool)
+    gold_labels = parse_values(frame[gold_codes_col], gold_codes_col)
+    prediction_labels = parse_values(frame[prediction_col], prediction_col)
+    valid_mask = np.asarray([bool(values) for values in gold_labels], dtype=bool)
     evaluated = frame.loc[valid_mask].copy()
-    gold_maps = [
-        values for values, keep in zip(gold_maps, valid_mask, strict=True) if keep
+    gold_labels = [
+        values for values, keep in zip(gold_labels, valid_mask, strict=True) if keep
     ]
-    prediction_maps = [
+    prediction_labels = [
         values
-        for values, keep in zip(prediction_maps, valid_mask, strict=True)
+        for values, keep in zip(prediction_labels, valid_mask, strict=True)
         if keep
     ]
     base_metrics = {
@@ -56,7 +59,7 @@ def calculate_metrics(
         "evaluated_rows": int(valid_mask.sum()),
         "rows_without_known_gold_codes": int((~valid_mask).sum()),
     }
-    if not gold_maps:
+    if not gold_labels:
         return (
             base_metrics,
             pd.DataFrame(
@@ -83,9 +86,12 @@ def calculate_metrics(
     )
     from sklearn.preprocessing import MultiLabelBinarizer
 
+    def unique_codes(labels: list[tuple[str, int]]) -> list[str]:
+        return list(dict.fromkeys(code for code, _ in labels))
+
     classes = sorted(known_codes)
-    gold_lists = [list(labels) for labels in gold_maps]
-    prediction_lists = [list(labels) for labels in prediction_maps]
+    gold_lists = [unique_codes(labels) for labels in gold_labels]
+    prediction_lists = [unique_codes(labels) for labels in prediction_labels]
     binarizer = MultiLabelBinarizer(classes=classes)
     binarizer.fit([classes])
     y_true = binarizer.transform(gold_lists)
@@ -112,26 +118,48 @@ def calculate_metrics(
     joint_binarizer.fit([joint_classes])
     joint_true = joint_binarizer.transform(
         [
-            [f"{code}:{sentiment}" for code, sentiment in labels.items()]
-            for labels in gold_maps
+            [f"{code}:{sentiment}" for code, sentiment in labels]
+            for labels in gold_labels
         ]
     )
     joint_pred = joint_binarizer.transform(
         [
-            [f"{code}:{sentiment}" for code, sentiment in labels.items()]
-            for labels in prediction_maps
+            [f"{code}:{sentiment}" for code, sentiment in labels]
+            for labels in prediction_labels
         ]
     )
-    gold_pairs = sum(len(labels) for labels in gold_maps)
+    gold_pair_sets = [set(labels) for labels in gold_labels]
+    prediction_pair_sets = [set(labels) for labels in prediction_labels]
+    gold_code_sets = [{code for code, _ in labels} for labels in gold_labels]
+    prediction_code_sets = [
+        {code for code, _ in labels} for labels in prediction_labels
+    ]
+    gold_pairs = sum(len(labels) for labels in gold_pair_sets)
     detected_gold_pairs = sum(
-        code in predicted
-        for gold, predicted in zip(gold_maps, prediction_maps, strict=True)
-        for code in gold
+        code in predicted_codes
+        for gold, predicted_codes in zip(
+            gold_pair_sets,
+            prediction_code_sets,
+            strict=True,
+        )
+        for code, _ in gold
     )
     correct_sentiments = sum(
-        predicted.get(code) == sentiment
-        for gold, predicted in zip(gold_maps, prediction_maps, strict=True)
-        for code, sentiment in gold.items()
+        len(gold & predicted)
+        for gold, predicted in zip(
+            gold_pair_sets,
+            prediction_pair_sets,
+            strict=True,
+        )
+    )
+    gold_codes = sum(len(codes) for codes in gold_code_sets)
+    detected_gold_codes = sum(
+        len(gold & predicted)
+        for gold, predicted in zip(
+            gold_code_sets,
+            prediction_code_sets,
+            strict=True,
+        )
     )
 
     metrics = {
@@ -169,8 +197,10 @@ def calculate_metrics(
             if detected_gold_pairs
             else None
         ),
-        "gold_codes": int(gold_pairs),
-        "detected_gold_codes": int(detected_gold_pairs),
+        "gold_codes": int(gold_codes),
+        "detected_gold_codes": int(detected_gold_codes),
+        "gold_code_sentiment_pairs": int(gold_pairs),
+        "gold_pairs_with_detected_code": int(detected_gold_pairs),
     }
 
     precision, recall, f1, support = precision_recall_fscore_support(
@@ -182,19 +212,35 @@ def calculate_metrics(
     gold_sentiment_accuracy: list[float | None] = []
     detected_sentiment_accuracy: list[float | None] = []
     for code in classes:
-        gold_values = [
-            (gold[code], predicted.get(code))
-            for gold, predicted in zip(gold_maps, prediction_maps, strict=True)
-            if code in gold
-        ]
-        detected_values = [values for values in gold_values if values[1] is not None]
+        gold_values: list[tuple[int, set[int]]] = []
+        for gold, predicted in zip(
+            gold_pair_sets,
+            prediction_pair_sets,
+            strict=True,
+        ):
+            gold_sentiments = {sentiment for label, sentiment in gold if label == code}
+            predicted_sentiments = {
+                sentiment for label, sentiment in predicted if label == code
+            }
+            gold_values.extend(
+                (sentiment, predicted_sentiments) for sentiment in gold_sentiments
+            )
+        detected_values = [values for values in gold_values if values[1]]
         gold_sentiment_accuracy.append(
-            float(np.mean([gold == predicted for gold, predicted in gold_values]))
+            float(
+                np.mean(
+                    [sentiment in predicted for sentiment, predicted in gold_values]
+                )
+            )
             if gold_values
             else None
         )
         detected_sentiment_accuracy.append(
-            float(np.mean([gold == predicted for gold, predicted in detected_values]))
+            float(
+                np.mean(
+                    [sentiment in predicted for sentiment, predicted in detected_values]
+                )
+            )
             if detected_values
             else None
         )
@@ -213,7 +259,11 @@ def calculate_metrics(
 
     mismatches = [
         gold != predicted
-        for gold, predicted in zip(gold_maps, prediction_maps, strict=True)
+        for gold, predicted in zip(
+            gold_pair_sets,
+            prediction_pair_sets,
+            strict=True,
+        )
     ]
     errors = evaluated.loc[mismatches].copy()
     return metrics, per_class, errors

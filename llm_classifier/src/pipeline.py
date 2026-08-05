@@ -19,6 +19,7 @@ from .data_io import (
     assignable_codes,
     clean_text,
     combine_text,
+    parse_code_sentiments,
     parse_codebook,
     read_table,
     render_codebook,
@@ -54,7 +55,12 @@ def _result_columns(
     result: ClassificationResult,
     codebook_lookup: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    codes = [code for code in result.codes if code != UNKNOWN_CODE]
+    labels = [
+        (code, sentiment)
+        for code, sentiment in zip(result.codes, result.sentiments, strict=False)
+        if code != UNKNOWN_CODE
+    ]
+    codes = [code for code, _ in labels]
     names = [
         str(codebook_lookup.get(code, {}).get("name", code))
         for code in codes
@@ -77,20 +83,18 @@ def _result_columns(
         "predicted_names": "; ".join(names) or UNKNOWN_CODE,
         "predicted_parent_codes": ", ".join(parent_codes),
         "predicted_parent_names": "; ".join(parent_names),
-        "predicted_sentiments": ", ".join(
-            str(result.sentiments[code]) for code in codes
-        ),
+        "predicted_sentiments": ", ".join(str(sentiment) for _, sentiment in labels),
         "predicted_code_sentiments": (
-            ", ".join(f"{code}:{result.sentiments[code]}" for code in codes)
+            ", ".join(f"{code}:{sentiment}" for code, sentiment in labels)
             or UNKNOWN_CODE
         ),
         "predicted_sentiment_names": "; ".join(
-            f"{code}:{SENTIMENT_NAMES[result.sentiments[code]]}" for code in codes
+            f"{code}:{SENTIMENT_NAMES[sentiment]}" for code, sentiment in labels
         ),
         "confidence": None,
         "margin": None,
         "top_candidates": ", ".join(
-            f"{code}:{result.sentiments[code]}" for code in codes
+            f"{code}:{sentiment}" for code, sentiment in labels
         ),
         "needs_review": result.needs_review,
         "invalid_codes": ", ".join(result.invalid_codes),
@@ -105,7 +109,7 @@ def _result_columns(
 def _empty_result(reason: str) -> ClassificationResult:
     return ClassificationResult(
         codes=[UNKNOWN_CODE],
-        sentiments={},
+        sentiments=[],
         needs_review=True,
         invalid_codes=[],
         error=reason,
@@ -260,6 +264,15 @@ def run_pipeline(
     missing = [column for column in required if column not in source.columns]
     if missing:
         raise ValueError(f"Missing columns: {missing}. Existing: {list(source.columns)}")
+    if gold_codes_col:
+        for row_position, value in enumerate(source[gold_codes_col]):
+            try:
+                parse_code_sentiments(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid code/sentiment labels in column {gold_codes_col!r} "
+                    f"at source row {row_position + 2}: {exc}"
+                ) from exc
     codebook = parse_codebook(codebook_path)
     allowed_codes = assignable_codes(codebook)
     classifier = VLLMSurveyClassifier(

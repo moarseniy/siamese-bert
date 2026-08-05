@@ -69,12 +69,13 @@ def split_codes(value: Any) -> list[str]:
     return result
 
 
-def parse_code_sentiments(value: Any) -> dict[str, int]:
+def parse_code_sentiments(value: Any) -> list[tuple[str, int]]:
     """Parse inline labels such as ``E1:1, A3:0``."""
     if is_missing(value):
-        return {}
+        return []
     normalized_separators = re.sub(r"[;\n\r]+", ",", str(value))
-    labels: dict[str, int] = {}
+    labels: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
     for raw_item in normalized_separators.split(","):
         item = raw_item.strip()
         if not item or normalize_code(item) == UNKNOWN_CODE:
@@ -86,9 +87,10 @@ def parse_code_sentiments(value: Any) -> dict[str, int]:
             )
         code = normalize_code(match.group(1))
         sentiment = int(match.group(2))
-        if code in labels and labels[code] != sentiment:
-            raise ValueError(f"Code {code!r} has conflicting sentiments in one row.")
-        labels[code] = sentiment
+        label = (code, sentiment)
+        if label not in seen:
+            seen.add(label)
+            labels.append(label)
     return labels
 
 
