@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from cross_encoder_classifier.src.data_io import (
+    ConflictingSentimentsError,
     build_pairs,
     load_labeled_data,
     parse_annotations,
@@ -33,6 +34,9 @@ def test_annotations_support_aligned_and_inline_formats() -> None:
     assert parse_annotations("A1:2; B1=positive") == [("A1", 2), ("B1", 1)]
     assert parse_annotations("UNKNOWN", None) == []
     assert parse_annotations("A1", 2.0) == [("A1", 2)]
+    assert parse_annotations("A1:2, A1:2") == [("A1", 2)]
+    with pytest.raises(ConflictingSentimentsError, match="conflicting sentiments"):
+        parse_annotations("A1:1, A1:2")
     with pytest.raises(ValueError, match="equal item counts"):
         parse_annotations("A1, B1", "2")
     with pytest.raises(ValueError, match="Sentiment is missing"):
@@ -49,15 +53,23 @@ def test_loading_and_pair_generation(tmp_path: Path) -> None:
                 "Зарплата низкая, но коллектив отличный.",
                 "Нормальное рабочее место.",
                 "Ничего не могу сказать.",
+                "Зарплата нравится, но иногда расстраивает.",
             ],
-            "Коды_новые": ["A1, B1", "A2", "UNKNOWN"],
-            "Тональности": ["2, 1", "0", ""],
+            "Коды_новые": ["A1, B1", "A2", "UNKNOWN", "A1, A1"],
+            "Тональности": ["2, 1", "0", "", "1, 2"],
         }
     ).to_csv(source_path, index=False, encoding="utf-8-sig")
 
     data, codebook = load_labeled_data(source_path, codebook_path)
     assert len(data) == 3
     assert data.iloc[0]["annotations"] == [("A1", 2), ("B1", 1)]
+    assert data.attrs["load_report"] == {
+        "input_rows": 4,
+        "loaded_rows": 3,
+        "empty_text_rows": 0,
+        "skipped_conflicting_sentiment_rows": 1,
+        "skipped_conflicting_sentiment_source_rows": [5],
+    }
 
     all_pairs = build_pairs(data.iloc[[0]], codebook, negative_ratio=None)
     assert all_pairs["code"].tolist() == ["A1", "A2", "B1"]

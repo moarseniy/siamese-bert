@@ -25,6 +25,15 @@ SENTIMENT_BY_MODEL_CLASS = {
     value: key for key, value in MODEL_CLASS_BY_SENTIMENT.items()
 }
 
+
+class ConflictingSentimentsError(ValueError):
+    """Raised when one response assigns different sentiments to one code."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(f"Code {code!r} has conflicting sentiments in one row.")
+
+
 _CYRILLIC_TO_LATIN = str.maketrans(
     {
         "А": "A",
@@ -152,7 +161,7 @@ def parse_annotations(
         if not code:
             raise ValueError("Annotation contains an empty code.")
         if code in unique and unique[code] != sentiment:
-            raise ValueError(f"Code {code!r} has conflicting sentiments in one row.")
+            raise ConflictingSentimentsError(code)
         unique[code] = sentiment
     return list(unique.items())
 
@@ -306,13 +315,19 @@ def load_labeled_data(
     sentiment_column_exists = bool(sentiments_col and sentiments_col in source.columns)
     records: list[dict[str, Any]] = []
     unknown_codes: set[str] = set()
+    conflicting_rows: list[int] = []
+    empty_text_rows = 0
     for row_id, row in source.iterrows():
         answer = clean_text(row[text_col])
         if not answer:
+            empty_text_rows += 1
             continue
         sentiment_value = row[sentiments_col] if sentiment_column_exists else None
         try:
             annotations = parse_annotations(row[codes_col], sentiment_value)
+        except ConflictingSentimentsError:
+            conflicting_rows.append(int(row_id) + 2)
+            continue
         except ValueError as exc:
             raise ValueError(
                 f"Invalid annotations at source row {row_id + 2}: {exc}"
@@ -338,9 +353,18 @@ def load_labeled_data(
         raise ValueError(f"Codes are absent from leaf subcategories: {preview}")
     if not records:
         raise ValueError(
-            "No non-empty responses remain after loading the training data."
+            "No usable responses remain after loading the training data "
+            f"(conflicting sentiment rows skipped: {len(conflicting_rows)})."
         )
-    return pd.DataFrame(records), codebook
+    data = pd.DataFrame(records)
+    data.attrs["load_report"] = {
+        "input_rows": int(len(source)),
+        "loaded_rows": int(len(data)),
+        "empty_text_rows": int(empty_text_rows),
+        "skipped_conflicting_sentiment_rows": int(len(conflicting_rows)),
+        "skipped_conflicting_sentiment_source_rows": conflicting_rows,
+    }
+    return data, codebook
 
 
 def _primary_split_label(annotations: list[tuple[str, int]]) -> str:

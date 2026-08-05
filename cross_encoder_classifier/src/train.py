@@ -334,6 +334,19 @@ def train_model(
         context_col=context_col,
         csv_sep=csv_sep,
     )
+    data_report = dict(data.attrs.get("load_report", {}))
+    skipped_conflicts = int(
+        data_report.get("skipped_conflicting_sentiment_rows", 0)
+    )
+    skipped_source_rows = list(
+        data_report.get("skipped_conflicting_sentiment_source_rows", [])
+    )
+    print(f"Skipped rows with conflicting code sentiments: {skipped_conflicts}")
+    if skipped_source_rows:
+        preview = ", ".join(map(str, skipped_source_rows[:20]))
+        suffix = " ..." if len(skipped_source_rows) > 20 else ""
+        print(f"Conflicting source rows: {preview}{suffix}")
+    _write_json(data_report, output_dir / "data_report.json")
     leaves = leaf_codebook(codebook)
     codes = leaves["code"].astype(str).tolist()
     response_splits = split_train_val_test(data, val_size, test_size, seed)
@@ -624,6 +637,7 @@ def train_model(
         "negative_ratio": negative_ratio,
         "class_weights": use_class_weights,
         "trust_remote_code": trust_remote_code,
+        "data_report": data_report,
         "training": {
             "epochs_requested": epochs,
             "epochs_completed": len(history),

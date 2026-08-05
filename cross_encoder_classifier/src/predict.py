@@ -9,7 +9,12 @@ import numpy as np
 import pandas as pd
 
 from .classifier import CrossEncoderSurveyClassifier
-from .data_io import parse_annotations, read_table, write_table
+from .data_io import (
+    ConflictingSentimentsError,
+    parse_annotations,
+    read_table,
+    write_table,
+)
 from .metrics import (
     calculate_pair_metrics,
     calculate_response_metrics,
@@ -29,15 +34,21 @@ def _gold_targets(
     codes_col: str,
     sentiments_col: str | None,
     classifier: CrossEncoderSurveyClassifier,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray, list[int]]:
     sentiment_column_exists = bool(sentiments_col and sentiments_col in source.columns)
     code_index = {code: index for index, code in enumerate(classifier.codes)}
     targets = np.zeros((len(source), len(classifier.codes)), dtype=np.int8)
+    valid_mask = np.ones(len(source), dtype=bool)
+    conflicting_rows: list[int] = []
     unknown_codes: set[str] = set()
     for row_position, (_, row) in enumerate(source.iterrows()):
         sentiments_value = row[sentiments_col] if sentiment_column_exists else None
         try:
             annotations = parse_annotations(row[codes_col], sentiments_value)
+        except ConflictingSentimentsError:
+            valid_mask[row_position] = False
+            conflicting_rows.append(row_position + 2)
+            continue
         except ValueError as exc:
             raise ValueError(
                 f"Invalid gold annotations at source row {row_position + 2}: {exc}"
@@ -52,7 +63,7 @@ def _gold_targets(
             "Gold codes are absent from the active leaf codebook: "
             + ", ".join(sorted(unknown_codes)[:20])
         )
-    return targets
+    return targets, valid_mask, conflicting_rows
 
 
 def classify_file(
@@ -107,7 +118,14 @@ def classify_file(
     output_path = write_table(result, output_path)
 
     if gold_codes_col:
-        y_true = _gold_targets(source, gold_codes_col, gold_sentiments_col, classifier)
+        y_true, evaluation_mask, conflicting_rows = _gold_targets(
+            source,
+            gold_codes_col,
+            gold_sentiments_col,
+            classifier,
+        )
+        evaluated_true = y_true[evaluation_mask]
+        evaluated_probabilities = probabilities[evaluation_mask]
         chosen_threshold = (
             classifier.threshold if threshold is None else float(threshold)
         )
@@ -115,19 +133,22 @@ def classify_file(
             classifier.max_labels if max_labels is None else int(max_labels)
         )
         response_metrics, per_code = calculate_response_metrics(
-            y_true,
-            probabilities,
+            evaluated_true,
+            evaluated_probabilities,
             classifier.codes,
             chosen_threshold,
             chosen_max_labels,
         )
         pair_metrics, pair_per_class = calculate_pair_metrics(
-            y_true.reshape(-1), probabilities.reshape(-1, 4)
+            evaluated_true.reshape(-1),
+            evaluated_probabilities.reshape(-1, 4),
         )
         metrics = {
             **response_metrics,
             "input_rows": int(len(source)),
-            "evaluated_rows": int(len(source)),
+            "evaluated_rows": int(evaluation_mask.sum()),
+            "skipped_conflicting_sentiment_rows": int(len(conflicting_rows)),
+            "skipped_conflicting_sentiment_source_rows": conflicting_rows,
             "leaf_codes": int(len(classifier.codes)),
             "pair": pair_metrics,
         }
@@ -142,16 +163,29 @@ def classify_file(
         per_code.to_csv(per_code_path, index=False, encoding="utf-8-sig")
         pair_per_class.to_csv(pair_class_path, index=False, encoding="utf-8-sig")
 
-        predicted_classes = decode_response_predictions(
-            probabilities, chosen_threshold, chosen_max_labels
+        evaluated_predictions = decode_response_predictions(
+            evaluated_probabilities,
+            chosen_threshold,
+            chosen_max_labels,
         )
-        error_mask = (predicted_classes != y_true).any(axis=1)
+        error_mask = np.zeros(len(source), dtype=bool)
+        error_mask[np.flatnonzero(evaluation_mask)] = (
+            evaluated_predictions != evaluated_true
+        ).any(axis=1)
         result[error_mask].to_csv(errors_path, index=False, encoding="utf-8-sig")
         print(
-            f"Metrics: micro_f1={response_metrics['micro_f1']:.4f}; "
-            f"sentiment_accuracy={response_metrics['gold_code_sentiment_accuracy']}; "
-            f"evaluated={len(source)}"
+            "Skipped gold rows with conflicting code sentiments: "
+            f"{len(conflicting_rows)}"
         )
+        if evaluation_mask.any():
+            print(
+                f"Metrics: micro_f1={response_metrics['micro_f1']:.4f}; "
+                "sentiment_accuracy="
+                f"{response_metrics['gold_code_sentiment_accuracy']}; "
+                f"evaluated={int(evaluation_mask.sum())}"
+            )
+        else:
+            print("Metrics: no rows remain after filtering conflicting sentiments.")
         print(
             f"Reports: {stats_path}, {per_code_path}, {pair_class_path}, {errors_path}"
         )

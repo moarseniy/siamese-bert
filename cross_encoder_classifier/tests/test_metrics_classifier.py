@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import torch
 
 from cross_encoder_classifier.src.classifier import CrossEncoderSurveyClassifier
@@ -9,6 +10,7 @@ from cross_encoder_classifier.src.metrics import (
     decode_response_predictions,
     select_presence_threshold,
 )
+from cross_encoder_classifier.src.predict import _gold_targets
 
 
 def _probabilities() -> np.ndarray:
@@ -111,3 +113,24 @@ def test_pair_inference_uses_answer_major_code_order() -> None:
         ("Второй", "A1. Зарплата"),
         ("Второй", "B1. Коллектив"),
     ]
+
+
+def test_gold_metrics_skip_conflicting_sentiment_rows() -> None:
+    classifier = CrossEncoderSurveyClassifier.__new__(CrossEncoderSurveyClassifier)
+    classifier.codes = ["A1", "B1"]
+    source = pd.DataFrame(
+        {
+            "Коды_новые": ["A1:1, A1:2", "B1:0"],
+        }
+    )
+
+    targets, valid_mask, conflicting_rows = _gold_targets(
+        source,
+        codes_col="Коды_новые",
+        sentiments_col=None,
+        classifier=classifier,
+    )
+
+    assert valid_mask.tolist() == [False, True]
+    assert conflicting_rows == [2]
+    assert targets[1].tolist() == [0, 1]
