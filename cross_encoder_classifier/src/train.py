@@ -12,6 +12,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from .data_io import (
+    CODE_DESCRIPTION_FORMAT_TEXT_ONLY,
     MODEL_CLASS_NAMES,
     build_pairs,
     leaf_codebook,
@@ -276,6 +277,7 @@ def train_model(
     codes_col: str = "Коды_новые",
     sentiments_col: str | None = "Тональности",
     context_col: str | None = None,
+    after_semicolon_prefix: str | None = None,
     csv_sep: str | None = None,
     val_size: float = 0.1,
     test_size: float = 0.1,
@@ -332,6 +334,7 @@ def train_model(
         codes_col=codes_col,
         sentiments_col=sentiments_col,
         context_col=context_col,
+        after_semicolon_prefix=after_semicolon_prefix,
         csv_sep=csv_sep,
     )
     data_report = dict(data.attrs.get("load_report", {}))
@@ -620,6 +623,7 @@ def train_model(
         "pipeline": "cross_encoder_code_sentiment_classifier",
         "base_model": base_model,
         "model_subdir": "model",
+        "code_description_format": CODE_DESCRIPTION_FORMAT_TEXT_ONLY,
         "num_model_classes": 4,
         "model_classes": MODEL_CLASS_NAMES,
         "sentiment_mapping": {"0": "neutral", "1": "positive", "2": "negative"},
@@ -631,6 +635,7 @@ def train_model(
         "codes_col": codes_col,
         "sentiments_col": sentiments_col,
         "context_col": context_col,
+        "after_semicolon_prefix": after_semicolon_prefix,
         "seed": seed,
         "val_size": val_size,
         "test_size": test_size,
@@ -676,6 +681,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--codes-col", default="Коды_новые")
     parser.add_argument("--sentiments-col", default="Тональности")
     parser.add_argument("--context-col", default=None)
+    parser.add_argument(
+        "--after-semicolon-prefix",
+        default=None,
+        help=(
+            "Insert this text immediately after the first ';' in every answer. "
+            "Answers without ';' are unchanged."
+        ),
+    )
     parser.add_argument("--csv-sep", default=None)
     parser.add_argument("--val-size", type=float, default=0.1)
     parser.add_argument("--test-size", type=float, default=0.1)
@@ -729,6 +742,7 @@ def main(argv: list[str] | None = None) -> None:
         codes_col=args.codes_col,
         sentiments_col=args.sentiments_col,
         context_col=args.context_col,
+        after_semicolon_prefix=args.after_semicolon_prefix,
         csv_sep=args.csv_sep,
         val_size=args.val_size,
         test_size=args.test_size,

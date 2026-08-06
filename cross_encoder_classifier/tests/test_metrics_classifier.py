@@ -101,15 +101,16 @@ def test_pair_inference_uses_answer_major_code_order() -> None:
     classifier.device = torch.device("cpu")
     classifier.tokenizer = FakeTokenizer()
     classifier.model = FakeModel()
+    classifier.after_semicolon_prefix = "нужно улучшить: "
 
     probabilities = classifier.predict_probabilities(
-        ["Первый", "Второй"], batch_size=3, show_progress=False
+        ["8; Первый", "Второй"], batch_size=3, show_progress=False
     )
 
     assert probabilities.shape == (2, 2, 4)
     assert classifier.tokenizer.pairs == [
-        ("Первый", "A1. Зарплата"),
-        ("Первый", "B1. Коллектив"),
+        ("8; нужно улучшить: Первый", "A1. Зарплата"),
+        ("8; нужно улучшить: Первый", "B1. Коллектив"),
         ("Второй", "A1. Зарплата"),
         ("Второй", "B1. Коллектив"),
     ]

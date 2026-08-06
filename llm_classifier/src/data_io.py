@@ -40,8 +40,22 @@ def clean_text(value: Any) -> str:
     return "" if is_missing(value) else str(value).strip()
 
 
-def combine_text(answer: Any, context: Any = None) -> str:
-    answer_text = clean_text(answer)
+def add_after_semicolon_prefix(value: Any, prefix: Any = None) -> str:
+    text = clean_text(value)
+    normalized_prefix = clean_text(prefix)
+    if not normalized_prefix or ";" not in text:
+        return text
+    before, after = text.split(";", 1)
+    suffix = f" {after.strip()}" if after.strip() else ""
+    return f"{before.strip()}; {normalized_prefix}{suffix}"
+
+
+def combine_text(
+    answer: Any,
+    context: Any = None,
+    after_semicolon_prefix: Any = None,
+) -> str:
+    answer_text = add_after_semicolon_prefix(answer, after_semicolon_prefix)
     context_text = clean_text(context)
     if context_text:
         return f"Контекст: {context_text}\nОтвет: {answer_text}"

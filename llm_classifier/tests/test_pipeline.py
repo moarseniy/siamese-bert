@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from llm_classifier.src.client import VLLMSurveyClassifier, parse_classification
+from llm_classifier.src.data_io import add_after_semicolon_prefix
 from llm_classifier.src.evaluate import evaluate_predictions
 from llm_classifier.src.metrics import calculate_metrics
 from llm_classifier.src.pipeline import run_pipeline
@@ -116,6 +117,16 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(sentiments, [1])
         self.assertTrue(review)
         self.assertEqual(invalid, ["ZZ9"])
+
+    def test_after_semicolon_prefix_only_changes_the_suffix(self) -> None:
+        self.assertEqual(
+            add_after_semicolon_prefix("8;зарплата", "нужно улучшить: "),
+            "8; нужно улучшить: зарплата",
+        )
+        self.assertEqual(
+            add_after_semicolon_prefix("зарплата", "нужно улучшить:"),
+            "зарплата",
+        )
 
     def test_parser_deduplicates_equal_labels_and_rejects_bad_sentiment(self) -> None:
         codes, sentiments, review, invalid = parse_classification(
@@ -232,7 +243,7 @@ class LLMPipelineTests(unittest.TestCase):
             pd.DataFrame(
                 [
                     {
-                        "Ответ": "зарплата нравится, но иногда низкая",
+                        "Ответ": "9; зарплата нравится, но иногда низкая",
                         "Коды_новые": "A1:1, A1:2",
                     },
                     {"Ответ": "неудобный офис", "Коды_новые": "B1:2"},
@@ -255,6 +266,7 @@ class LLMPipelineTests(unittest.TestCase):
                     model="Qwen/Qwen3.5-test",
                     gold_codes_col="Коды_новые",
                     checkpoint_every=1,
+                    after_semicolon_prefix="нужно улучшить: ",
                 )
 
             result = pd.read_csv(saved_path, encoding="utf-8-sig")
@@ -280,6 +292,15 @@ class LLMPipelineTests(unittest.TestCase):
             first_request["extra_body"]["chat_template_kwargs"]["enable_thinking"],
             False,
         )
+        user_prompts = [
+            request["messages"][1]["content"] for request in FakeCompletions.requests
+        ]
+        self.assertTrue(
+            any(
+                "9; нужно улучшить: зарплата нравится" in prompt
+                for prompt in user_prompts
+            )
+        )
         self.assertEqual(
             result["predicted_codes"].tolist(),
             ["A1, A1", "B1", "UNKNOWN"],
@@ -303,6 +324,7 @@ class LLMPipelineTests(unittest.TestCase):
         self.assertEqual(stats["evaluated_rows"], 2)
         self.assertEqual(stats["failed_rows"], 1)
         self.assertEqual(stats["concurrency"], 8)
+        self.assertEqual(stats["after_semicolon_prefix"], "нужно улучшить: ")
         self.assertGreater(stats["throughput_rows_per_second"], 0)
         self.assertTrue(stats_exists)
         self.assertTrue(per_class_exists)

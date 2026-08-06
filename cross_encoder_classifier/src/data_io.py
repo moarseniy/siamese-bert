@@ -12,6 +12,12 @@ TEXT_COL_DEFAULT = "Ответ"
 CODES_COL_DEFAULT = "Коды_новые"
 SENTIMENTS_COL_DEFAULT = "Тональности"
 UNKNOWN_CODE = "UNKNOWN"
+CODE_DESCRIPTION_FORMAT_LEGACY = "code_category_subcategory_v1"
+CODE_DESCRIPTION_FORMAT_TEXT_ONLY = "category_subcategory_v2"
+SUPPORTED_CODE_DESCRIPTION_FORMATS = {
+    CODE_DESCRIPTION_FORMAT_LEGACY,
+    CODE_DESCRIPTION_FORMAT_TEXT_ONLY,
+}
 
 MODEL_CLASS_NAMES = {
     0: "absent",
@@ -82,6 +88,16 @@ def is_missing(value: Any) -> bool:
 
 def clean_text(value: Any) -> str:
     return "" if is_missing(value) else str(value).strip()
+
+
+def add_after_semicolon_prefix(value: Any, prefix: Any = None) -> str:
+    text = clean_text(value)
+    normalized_prefix = clean_text(prefix)
+    if not normalized_prefix or ";" not in text:
+        return text
+    before, after = text.split(";", 1)
+    suffix = f" {after.strip()}" if after.strip() else ""
+    return f"{before.strip()}; {normalized_prefix}{suffix}"
 
 
 def normalize_code(value: Any) -> str:
@@ -171,7 +187,16 @@ def parent_code(code: str) -> str:
     return match.group(1) if match else normalize_code(code)
 
 
-def parse_codebook(path: str | Path) -> pd.DataFrame:
+def parse_codebook(
+    path: str | Path,
+    description_format: str = CODE_DESCRIPTION_FORMAT_TEXT_ONLY,
+) -> pd.DataFrame:
+    if description_format not in SUPPORTED_CODE_DESCRIPTION_FORMATS:
+        raise ValueError(
+            "Unsupported code description format: "
+            f"{description_format!r}. Expected one of "
+            f"{sorted(SUPPORTED_CODE_DESCRIPTION_FORMATS)}."
+        )
     source_path = Path(path)
     if not source_path.exists():
         raise FileNotFoundError(f"Codebook file not found: {source_path}")
@@ -235,13 +260,15 @@ def parse_codebook(path: str | Path) -> pd.DataFrame:
             "Different Категория values for parent codes: "
             + ", ".join(inconsistent.index)
         )
-    frame["description"] = frame.apply(
-        lambda row: (
-            f"{row['code']}. Категория: {row['parent_name']}. "
-            f"Подкатегория: {row['name']}"
-        ),
-        axis=1,
+    descriptions = (
+        "Категория: "
+        + frame["parent_name"].astype(str)
+        + ". Подкатегория: "
+        + frame["name"].astype(str)
     )
+    if description_format == CODE_DESCRIPTION_FORMAT_LEGACY:
+        descriptions = frame["code"].astype(str) + ". " + descriptions
+    frame["description"] = descriptions
     return frame[
         ["code", "name", "description", "parent_code", "parent_name", "is_parent"]
     ]
@@ -282,8 +309,12 @@ def write_table(frame: pd.DataFrame, path: str | Path) -> Path:
     return output_path
 
 
-def combine_text(answer: Any, context: Any = None) -> str:
-    answer_text = clean_text(answer)
+def combine_text(
+    answer: Any,
+    context: Any = None,
+    after_semicolon_prefix: Any = None,
+) -> str:
+    answer_text = add_after_semicolon_prefix(answer, after_semicolon_prefix)
     context_text = clean_text(context)
     if context_text:
         return f"Контекст: {context_text}\nОтвет: {answer_text}"
@@ -297,6 +328,7 @@ def load_labeled_data(
     codes_col: str = CODES_COL_DEFAULT,
     sentiments_col: str | None = SENTIMENTS_COL_DEFAULT,
     context_col: str | None = None,
+    after_semicolon_prefix: str | None = None,
     csv_sep: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     source = read_table(input_path, csv_sep=csv_sep)
@@ -340,7 +372,11 @@ def load_labeled_data(
         records.append(
             {
                 "row_id": int(row_id),
-                "text": combine_text(answer, context),
+                "text": combine_text(
+                    answer,
+                    context,
+                    after_semicolon_prefix=after_semicolon_prefix,
+                ),
                 "answer": answer,
                 "context": clean_text(context),
                 "codes": [code for code, _ in annotations],

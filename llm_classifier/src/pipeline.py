@@ -138,6 +138,7 @@ def process_dataframe(
     checkpoint_every: int = 250,
     concurrency: int = 8,
     context_col: str | None = None,
+    after_semicolon_prefix: str | None = None,
     codebook_lookup: dict[str, dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
     if text_col not in frame.columns:
@@ -183,6 +184,7 @@ def process_dataframe(
                 answer = combine_text(
                     raw_answer,
                     row[context_col] if context_col else None,
+                    after_semicolon_prefix=after_semicolon_prefix,
                 )
                 if not raw_answer:
                     record_prediction(index, _empty_result("empty_text"), progress)
@@ -238,6 +240,7 @@ def run_pipeline(
     model: str | None = None,
     text_col: str = TEXT_COL_DEFAULT,
     context_col: str | None = None,
+    after_semicolon_prefix: str | None = None,
     gold_codes_col: str | None = None,
     csv_sep: str | None = None,
     timeout: float = 120.0,
@@ -305,6 +308,7 @@ def run_pipeline(
         checkpoint_every=checkpoint_every,
         concurrency=concurrency,
         context_col=context_col,
+        after_semicolon_prefix=after_semicolon_prefix,
         codebook_lookup=codebook.set_index("code").to_dict(orient="index"),
     )
     wall_time_seconds = time.perf_counter() - started_at
@@ -325,6 +329,7 @@ def run_pipeline(
     stats["thinking_temperature"] = thinking_temperature
     stats["thinking_top_p"] = thinking_top_p
     stats["thinking_top_k"] = thinking_top_k
+    stats["after_semicolon_prefix"] = after_semicolon_prefix
 
     stats_path, per_class_path, errors_path = metrics_paths(output_path)
     if gold_codes_col:
@@ -362,6 +367,14 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--model", default=None)
     parser.add_argument("--text-col", default=TEXT_COL_DEFAULT)
     parser.add_argument("--context-col", default=None)
+    parser.add_argument(
+        "--after-semicolon-prefix",
+        default=None,
+        help=(
+            "Insert this text immediately after the first ';' in every answer. "
+            "Answers without ';' are unchanged."
+        ),
+    )
     parser.add_argument(
         "--gold-codes-col",
         default=None,
@@ -406,6 +419,7 @@ def main(argv: list[str] | None = None) -> None:
         model=args.model,
         text_col=args.text_col,
         context_col=args.context_col,
+        after_semicolon_prefix=args.after_semicolon_prefix,
         gold_codes_col=args.gold_codes_col,
         csv_sep=args.csv_sep,
         timeout=args.timeout,

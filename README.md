@@ -48,6 +48,7 @@ python scripts/predict.py \
   --output predictions.xlsx \
   --text-col "Ответ" \
   --context-col "Вопрос" \
+  --after-semicolon-prefix "нужно улучшить:" \
   --gold-codes-col "Коды_новые" \
   --max-labels 6
 ```

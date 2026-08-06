@@ -9,6 +9,7 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 from .data_io import (
+    CODE_DESCRIPTION_FORMAT_LEGACY,
     SENTIMENT_BY_MODEL_CLASS,
     SENTIMENT_NAMES,
     UNKNOWN_CODE,
@@ -29,6 +30,7 @@ class CrossEncoderSurveyClassifier:
         codebook_path: str | Path | None = None,
         device: str | None = None,
         trust_remote_code: bool | None = None,
+        after_semicolon_prefix: str | None = None,
     ) -> None:
         self.artifact_dir = Path(artifact_dir)
         config_path = self.artifact_dir / "classifier_config.json"
@@ -38,6 +40,17 @@ class CrossEncoderSurveyClassifier:
         self.threshold = float(self.config["threshold"])
         self.max_labels = int(self.config.get("max_labels", 6))
         self.max_length = int(self.config.get("max_length", 256))
+        self.code_description_format = str(
+            self.config.get(
+                "code_description_format",
+                CODE_DESCRIPTION_FORMAT_LEGACY,
+            )
+        )
+        self.after_semicolon_prefix = (
+            str(self.config.get("after_semicolon_prefix", "") or "").strip()
+            if after_semicolon_prefix is None
+            else str(after_semicolon_prefix).strip()
+        )
 
         try:
             import torch
@@ -80,7 +93,10 @@ class CrossEncoderSurveyClassifier:
                     lambda value: str(value).strip().casefold() in {"true", "1"}
                 )
         else:
-            codebook = parse_codebook(codebook_path)
+            codebook = parse_codebook(
+                codebook_path,
+                description_format=self.code_description_format,
+            )
         self._set_codebook(codebook)
 
     def _set_codebook(self, codebook: pd.DataFrame) -> None:
@@ -111,7 +127,15 @@ class CrossEncoderSurveyClassifier:
             return np.empty((0, len(self.codes), 4), dtype=np.float32)
 
         texts = [
-            combine_text(answer, contexts[index] if contexts is not None else None)
+            combine_text(
+                answer,
+                contexts[index] if contexts is not None else None,
+                after_semicolon_prefix=getattr(
+                    self,
+                    "after_semicolon_prefix",
+                    "",
+                ),
+            )
             for index, answer in enumerate(answers)
         ]
         total_pairs = len(texts) * len(self.codes)

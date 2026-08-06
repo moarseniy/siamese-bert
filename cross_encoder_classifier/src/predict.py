@@ -83,6 +83,7 @@ def classify_file(
     margin_threshold: float = 0.05,
     device: str | None = None,
     trust_remote_code: bool | None = None,
+    after_semicolon_prefix: str | None = None,
 ) -> Path:
     source = read_table(input_path, csv_sep=csv_sep)
     required = [text_col]
@@ -101,6 +102,7 @@ def classify_file(
         codebook_path=codebook_path,
         device=device,
         trust_remote_code=trust_remote_code,
+        after_semicolon_prefix=after_semicolon_prefix,
     )
     contexts = source[context_col].tolist() if context_col else None
     predictions, probabilities = classifier.predict_batch(
@@ -210,6 +212,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--text-col", default="Ответ")
     parser.add_argument("--context-col", default=None)
     parser.add_argument(
+        "--after-semicolon-prefix",
+        default=None,
+        help=(
+            "Override the model setting and insert this text after the first ';'. "
+            "Answers without ';' are unchanged."
+        ),
+    )
+    parser.add_argument(
         "--gold-codes-col",
         default=None,
         help="Optional code column: calculate metrics and error reports.",
@@ -262,6 +272,7 @@ def main(argv: list[str] | None = None) -> None:
         margin_threshold=args.margin_threshold,
         device=args.device,
         trust_remote_code=args.trust_remote_code,
+        after_semicolon_prefix=args.after_semicolon_prefix,
     )
 
 

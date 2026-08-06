@@ -6,7 +6,9 @@ import pandas as pd
 import pytest
 
 from cross_encoder_classifier.src.data_io import (
+    CODE_DESCRIPTION_FORMAT_LEGACY,
     ConflictingSentimentsError,
+    add_after_semicolon_prefix,
     build_pairs,
     load_labeled_data,
     parse_annotations,
@@ -43,6 +45,31 @@ def test_annotations_support_aligned_and_inline_formats() -> None:
         parse_annotations("A1, B1")
 
 
+def test_after_semicolon_prefix_only_changes_the_suffix() -> None:
+    assert (
+        add_after_semicolon_prefix("8;зарплату и офис", "нужно улучшить: ")
+        == "8; нужно улучшить: зарплату и офис"
+    )
+    assert add_after_semicolon_prefix("зарплату", "нужно улучшить:") == "зарплату"
+
+
+def test_code_descriptions_exclude_ids_by_default(tmp_path: Path) -> None:
+    codebook_path = tmp_path / "codes.csv"
+    _write_codebook(codebook_path)
+
+    codebook = parse_codebook(codebook_path)
+    legacy = parse_codebook(
+        codebook_path,
+        description_format=CODE_DESCRIPTION_FORMAT_LEGACY,
+    )
+
+    assert codebook.loc[0, "description"] == (
+        "Категория: Условия труда. Подкатегория: "
+        "Уровень заработной платы и соответствие рынку"
+    )
+    assert legacy.loc[0, "description"].startswith("A1. Категория:")
+
+
 def test_loading_and_pair_generation(tmp_path: Path) -> None:
     codebook_path = tmp_path / "codes.csv"
     source_path = tmp_path / "answers.csv"
@@ -50,7 +77,7 @@ def test_loading_and_pair_generation(tmp_path: Path) -> None:
     pd.DataFrame(
         {
             "Ответ": [
-                "Зарплата низкая, но коллектив отличный.",
+                "8; Зарплата низкая, но коллектив отличный.",
                 "Нормальное рабочее место.",
                 "Ничего не могу сказать.",
                 "Зарплата нравится, но иногда расстраивает.",
@@ -60,9 +87,16 @@ def test_loading_and_pair_generation(tmp_path: Path) -> None:
         }
     ).to_csv(source_path, index=False, encoding="utf-8-sig")
 
-    data, codebook = load_labeled_data(source_path, codebook_path)
+    data, codebook = load_labeled_data(
+        source_path,
+        codebook_path,
+        after_semicolon_prefix="нужно улучшить: ",
+    )
     assert len(data) == 3
     assert data.iloc[0]["annotations"] == [("A1", 2), ("B1", 1)]
+    assert data.iloc[0]["text"] == (
+        "8; нужно улучшить: Зарплата низкая, но коллектив отличный."
+    )
     assert data.attrs["load_report"] == {
         "input_rows": 4,
         "loaded_rows": 3,
