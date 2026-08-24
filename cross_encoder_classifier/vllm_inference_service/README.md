@@ -46,10 +46,9 @@ curl -f -X POST http://localhost:8080/predict \
 Ошибки входного файла возвращаются JSON-ответом с HTTP 400/413/422, ошибки
 vLLM возвращаются с HTTP 502.
 
-## Артефакты
+## Артефакты и DVC
 
-Каталог, подключаемый в контейнер как `/service/artifacts`, должен выглядеть
-так:
+Если модель уже скачана, каталог `artifacts` выглядит так:
 
 ```text
 artifacts/
@@ -70,6 +69,29 @@ artifacts/
 `Подкатегория` под именем `codebook.xlsx`. Именно этот файл участвует в
 инференсе и возвращается клиенту без изменений.
 
+Вместо скачанного каталога модели можно оставить DVC-указатель:
+
+```text
+artifacts/
+├── .dvc/
+│   └── config
+├── classifier_config.json
+├── codebook.xlsx
+└── models/
+    └── bge-reranker-v2-m3.dvc
+```
+
+При старте `start.sh` сначала ищет готовый
+`artifacts/models/bge-reranker-v2-m3/config.json`. Если его нет, но существует
+`bge-reranker-v2-m3.dvc`, выполняется `dvc pull`, а vLLM запускается только
+после успешного скачивания и проверки модели.
+
+Для DVC нужен либо `artifacts/.dvc/config` с настроенным remote, либо точный URL
+исходного DVC remote в `DVC_REMOTE_URL`. Одного `.dvc`-файла без информации о
+remote недостаточно. Доступ к S3 передается стандартными переменными AWS или
+ролью, назначенной контейнеру. Для S3 в образ устанавливается
+`dvc[s3]==3.1.0`.
+
 ### Поддерживаемая модель
 
 Сервис намеренно поддерживает только четырехклассовую модель, дообученную
@@ -78,7 +100,8 @@ artifacts/
 BGE-M3 и порядок классов `absent/neutral/positive/negative`. Другие BERT,
 RuBERT, RoBERTa и XLM-R модели находятся вне текущего контракта сервиса.
 
-Для запуска нужен vLLM не старее `0.20.1`.
+В качестве основы используется корпоративный образ vLLM `0.17.1` на Python
+3.10.
 
 ## Запуск одним Docker-контейнером
 
@@ -100,22 +123,19 @@ docker run -d \
   --ipc=host \
   --env-file .env \
   -p 8080:8080 \
-  -v /absolute/path/to/artifacts:/service/artifacts:ro \
+  -v /absolute/path/to/artifacts:/app/artifacts \
   survey-cross-encoder
 ```
 
-Порт `8000` намеренно не публикуется. Посмотреть запуск модели и gateway:
+При использовании DVC каталог должен быть доступен на запись пользователю с
+UID `10001`: туда материализуется модель и записывается DVC cache. Если модель
+уже скачана, каталог после первого успешного запуска можно подключать read-only.
+
+Порт `8000` намеренно не публикуется. Посмотреть DVC pull, запуск модели и
+gateway:
 
 ```bash
 docker logs -f survey-cross-encoder
-```
-
-Другой базовый тег vLLM при необходимости задается во время сборки:
-
-```bash
-docker build \
-  --build-arg VLLM_IMAGE=vllm/vllm-openai:v0.20.1 \
-  -t survey-cross-encoder .
 ```
 
 ## Роль start.sh
@@ -123,6 +143,7 @@ docker build \
 В корне этой папки находится обязательный [`start.sh`](start.sh). Он активирует
 созданный внутри образа `venv`, после чего запускает оба процесса:
 
+- при необходимости скачивает модель командой `dvc pull`;
 - vLLM с моделью из `./artifacts/models/bge-reranker-v2-m3` только на
   `127.0.0.1:8000`;
 - gateway с полной предобработкой и постобработкой на `0.0.0.0:8080`.
@@ -168,6 +189,11 @@ Gateway ждёт загрузки модели до 15 минут, после ч
 | `THRESHOLD` | из config | Необязательное переопределение порога |
 | `MAX_LABELS` | из config | Необязательное ограничение кодов |
 | `VLLM_API_KEY` | случайный в `start.sh` | Внутренний Bearer-токен между gateway и vLLM |
+| `DVC_FILE` | `<MODEL_PATH>.dvc` | Путь к DVC-указателю модели |
+| `DVC_REMOTE` | default remote | Имя remote из DVC config |
+| `DVC_REMOTE_URL` | пусто | URL remote, если DVC config не поставляется |
+| `DVC_S3_ENDPOINT_URL` | пусто | Endpoint S3-совместимого хранилища |
+| `DVC_JOBS` | настройка DVC | Число параллельных загрузок |
 
 ## Тесты
 

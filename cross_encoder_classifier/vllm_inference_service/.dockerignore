@@ -3,7 +3,11 @@
 .pytest_cache
 .ruff_cache
 **/__pycache__
-artifacts
 venv
 tests
 requirements-dev.txt
+artifacts/.dvc/cache
+artifacts/.dvc/tmp
+artifacts/models/**
+!artifacts/models/
+!artifacts/models/*.dvc
