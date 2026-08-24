@@ -118,6 +118,16 @@ python scripts/train.py \
 
 ## Инференс
 
+Для production-развертывания дообученного `BAAI/bge-reranker-v2-m3` через
+`vllm serve` есть полностью изолированный HTTP-сервис в
+[`vllm_inference_service`](vllm_inference_service/README.md). Он принимает один
+Excel через `POST /predict` и возвращает ZIP с исходной книгой, дополненной
+предсказаниями, и `codebook.xlsx`. Другие архитектуры пока не поддерживаются.
+Gateway не импортирует код этого проекта и не использует `torch` или
+`transformers`.
+
+Локальный инференс через Transformers описан ниже.
+
 С сохраненным при обучении справочником:
 
 ```bash
