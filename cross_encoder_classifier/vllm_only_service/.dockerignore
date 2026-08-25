@@ -1,0 +1,11 @@
+.env
+.git
+.pytest_cache
+.ruff_cache
+**/__pycache__
+*.pyc
+venv
+.venv
+test.py
+README.md
+artifacts/models/*.dvc
