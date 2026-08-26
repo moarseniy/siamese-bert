@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-import os
 import re
 import zipfile
 from contextlib import asynccontextmanager
@@ -15,20 +14,23 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from openpyxl import load_workbook
 from tokenizers import Tokenizer
+import yaml
 
 
-VLLM_URL = os.environ["VLLM_URL"].rstrip("/")
-VLLM_API_KEY = os.getenv("VLLM_API_KEY", "").strip()
-SERVED_MODEL_NAME = os.getenv("SERVED_MODEL_NAME", "").strip()
-TEXT_COLUMN = os.getenv("TEXT_COLUMN", "Ответ")
-OUTPUT_COLUMN = os.getenv("OUTPUT_COLUMN", "Предсказание")
-SHEET_NAME = os.getenv("SHEET_NAME", "").strip()
-PAIR_BATCH_SIZE = int(os.getenv("PAIR_BATCH_SIZE", "512"))
-REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "600"))
-CODEBOOK_PATH = Path(os.getenv("CODEBOOK_PATH", "artifacts/codebook.xlsx"))
-TOKENIZER_PATH = Path(os.getenv("TOKENIZER_PATH", "artifacts/tokenizer.json"))
+SERVICE_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.yaml"
+SETTINGS = yaml.safe_load(SERVICE_CONFIG_PATH.read_text(encoding="utf-8"))
+VLLM_URL = str(SETTINGS["vllm_url"]).rstrip("/")
+VLLM_API_KEY = str(SETTINGS.get("vllm_api_key") or "").strip()
+SERVED_MODEL_NAME = str(SETTINGS.get("served_model_name") or "").strip()
+TEXT_COLUMN = str(SETTINGS.get("text_column", "Ответ"))
+OUTPUT_COLUMN = str(SETTINGS.get("output_column", "Предсказание"))
+SHEET_NAME = str(SETTINGS.get("sheet_name") or "").strip()
+PAIR_BATCH_SIZE = int(SETTINGS.get("pair_batch_size", 512))
+REQUEST_TIMEOUT = float(SETTINGS.get("request_timeout", 600))
+CODEBOOK_PATH = Path(SETTINGS.get("codebook_path", "artifacts/codebook.xlsx"))
+TOKENIZER_PATH = Path(SETTINGS.get("tokenizer_path", "artifacts/tokenizer.json"))
 CONFIG_PATH = Path(
-    os.getenv("CLASSIFIER_CONFIG_PATH", "artifacts/classifier_config.json")
+    SETTINGS.get("classifier_config_path", "artifacts/classifier_config.json")
 )
 
 

@@ -1,0 +1,11 @@
+vllm_url: https://example.corp/model-route
+vllm_api_key: ""
+served_model_name: ""
+text_column: Ответ
+output_column: Предсказание
+sheet_name: ""
+pair_batch_size: 512
+request_timeout: 600
+codebook_path: artifacts/codebook.xlsx
+tokenizer_path: artifacts/tokenizer.json
+classifier_config_path: artifacts/classifier_config.json
