@@ -12,24 +12,25 @@ ARG APP_HOME=/app
 ARG APP_USER=10001
 ARG APP_GROUP=10001
 
+ENV PATH=${APP_HOME}/venv/bin:${PATH}
+
 USER ${APP_USER}
 WORKDIR ${APP_HOME}
 
 COPY requirements.txt .
-RUN python3 -m venv --system-site-packages venv \
-    && . venv/bin/activate \
+RUN python3 -m venv venv \
     && pip install -U pip uv==0.7.21 \
-    && uv pip install 'dvc[s3]==3.1.0' -r requirements.txt --no-cache \
+    && uv pip install -r requirements.txt --no-cache \
         --index-url https://artifactory.corp.ingos.ru/api/pypi/common-python/simple \
         --extra-index-url https://artifactory.corp.ingos.ru/api/pypi/mlops-python-local/simple
 
-COPY app ./app
+COPY --chown=${APP_USER}:${APP_GROUP} config.yaml ./config.yaml
+COPY --chown=${APP_USER}:${APP_GROUP} src ./src
 COPY --chown=${APP_USER}:${APP_GROUP} artifacts ./artifacts
 COPY --chmod=0755 start.sh ./start.sh
 
-EXPOSE 8080
+EXPOSE 8800
 STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["/bin/bash"]
-CMD ["./start.sh"]
-# skip
+CMD ["./start.sh", "main.py"]

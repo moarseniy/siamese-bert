@@ -17,7 +17,12 @@ from tokenizers import Tokenizer
 import yaml
 
 
-SERVICE_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config.yaml"
+APP_ROOT = next(
+    parent
+    for parent in Path(__file__).resolve().parents
+    if (parent / "config.yaml").is_file()
+)
+SERVICE_CONFIG_PATH = APP_ROOT / "config.yaml"
 SETTINGS = yaml.safe_load(SERVICE_CONFIG_PATH.read_text(encoding="utf-8"))
 VLLM_URL = str(SETTINGS["vllm_url"]).rstrip("/")
 VLLM_API_KEY = str(SETTINGS.get("vllm_api_key") or "").strip()
@@ -27,10 +32,10 @@ OUTPUT_COLUMN = str(SETTINGS.get("output_column", "Предсказание"))
 SHEET_NAME = str(SETTINGS.get("sheet_name") or "").strip()
 PAIR_BATCH_SIZE = int(SETTINGS.get("pair_batch_size", 512))
 REQUEST_TIMEOUT = float(SETTINGS.get("request_timeout", 600))
-CODEBOOK_PATH = Path(SETTINGS.get("codebook_path", "artifacts/codebook.xlsx"))
-TOKENIZER_PATH = Path(SETTINGS.get("tokenizer_path", "artifacts/tokenizer.json"))
-CONFIG_PATH = Path(
-    SETTINGS.get("classifier_config_path", "artifacts/classifier_config.json")
+CODEBOOK_PATH = APP_ROOT / SETTINGS.get("codebook_path", "artifacts/codebook.xlsx")
+TOKENIZER_PATH = APP_ROOT / SETTINGS.get("tokenizer_path", "artifacts/tokenizer.json")
+CONFIG_PATH = APP_ROOT / SETTINGS.get(
+    "classifier_config_path", "artifacts/classifier_config.json"
 )
 
 
