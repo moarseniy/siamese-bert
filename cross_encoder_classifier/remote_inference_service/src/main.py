@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import io
 import json
 import re
-import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from typing import Any
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
-from openpyxl import load_workbook
-from tokenizers import Tokenizer
 import yaml
+from fastapi import FastAPI, HTTPException
+from tokenizers import Tokenizer
 
 
 APP_ROOT = next(
@@ -27,52 +25,54 @@ SETTINGS = yaml.safe_load(SERVICE_CONFIG_PATH.read_text(encoding="utf-8"))
 VLLM_URL = str(SETTINGS["vllm_url"]).rstrip("/")
 VLLM_API_KEY = str(SETTINGS.get("vllm_api_key") or "").strip()
 SERVED_MODEL_NAME = str(SETTINGS.get("served_model_name") or "").strip()
-TEXT_COLUMN = str(SETTINGS.get("text_column", "Ответ"))
-OUTPUT_COLUMN = str(SETTINGS.get("output_column", "Предсказание"))
-SHEET_NAME = str(SETTINGS.get("sheet_name") or "").strip()
 PAIR_BATCH_SIZE = int(SETTINGS.get("pair_batch_size", 512))
 REQUEST_TIMEOUT = float(SETTINGS.get("request_timeout", 600))
-CODEBOOK_PATH = APP_ROOT / SETTINGS.get("codebook_path", "artifacts/codebook.xlsx")
+CODEBOOK_PATH = APP_ROOT / SETTINGS.get("codebook_path", "artifacts/codebook.csv")
 TOKENIZER_PATH = APP_ROOT / SETTINGS.get("tokenizer_path", "artifacts/tokenizer.json")
 CONFIG_PATH = APP_ROOT / SETTINGS.get(
     "classifier_config_path", "artifacts/classifier_config.json"
 )
+SENTIMENT_NAMES = ("neutral", "positive", "negative")
 
 
 def text(value: object) -> str:
     return "" if value is None else str(value).strip()
 
 
-def load_assets() -> tuple[list[tuple[str, str]], Tokenizer, dict[str, object]]:
+def load_assets() -> tuple[
+    list[tuple[str, str, str, str]], Tokenizer, dict[str, object]
+]:
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     description_format = config.get(
         "code_description_format", "category_subcategory_v2"
     )
 
-    workbook = load_workbook(CODEBOOK_PATH, read_only=True, data_only=True)
-    sheet = workbook.active
-    headers = {text(cell.value): index for index, cell in enumerate(sheet[1], 1)}
+    source = CODEBOOK_PATH.read_text(encoding="utf-8-sig")
+    try:
+        delimiter = csv.Sniffer().sniff(source[:4096], delimiters=",;\t").delimiter
+    except csv.Error:
+        delimiter = ","
+    rows = csv.DictReader(io.StringIO(source), delimiter=delimiter)
     required = {"Код", "Категория", "Подкатегория"}
-    if missing := required - headers.keys():
+    if missing := required - set(rows.fieldnames or []):
         raise ValueError(f"Missing codebook columns: {sorted(missing)}")
 
-    codebook: list[tuple[str, str]] = []
-    for row in range(2, sheet.max_row + 1):
-        code = re.sub(r"\s+", "", text(sheet.cell(row, headers["Код"]).value).upper())
-        category = text(sheet.cell(row, headers["Категория"]).value)
-        subcategory = text(sheet.cell(row, headers["Подкатегория"]).value)
+    codebook: list[tuple[str, str, str, str]] = []
+    for row_number, row in enumerate(rows, 2):
+        code = re.sub(r"\s+", "", text(row["Код"]).upper())
+        category = text(row["Категория"])
+        subcategory = text(row["Подкатегория"])
         if not code and not category and not subcategory:
             continue
         if not code or not category or not subcategory:
-            raise ValueError(f"Invalid codebook row {row}")
+            raise ValueError(f"Invalid codebook row {row_number}")
         description = f"Категория: {category}. Подкатегория: {subcategory}"
         if description_format in {
             "category_subcategory_v1",
             "code_category_subcategory_v1",
         }:
             description = f"{code}. {description}"
-        codebook.append((code, description))
-    workbook.close()
+        codebook.append((code, category, subcategory, description))
     if not codebook:
         raise ValueError("Codebook is empty")
 
@@ -113,27 +113,36 @@ async def classify(app: FastAPI, token_ids: list[list[int]]) -> list[list[float]
 
 def decode(
     probabilities: list[list[float]],
-    codebook: list[tuple[str, str]],
+    codebook: list[tuple[str, str, str, str]],
     threshold: float,
     max_labels: int,
-) -> str:
-    candidates: list[tuple[float, str, int]] = []
-    for values, (code, _) in zip(probabilities, codebook, strict=True):
+) -> list[dict[str, Any]]:
+    candidates: list[tuple[float, tuple[str, str, str, str], int]] = []
+    for values, entry in zip(probabilities, codebook, strict=True):
         presence = 1.0 - values[0]
         if presence >= threshold:
             sentiment = max(range(3), key=lambda index: values[index + 1])
-            candidates.append((presence, code, sentiment))
-    candidates.sort(reverse=True)
-    return ", ".join(
-        f"{code}:{sentiment}"
-        for _, code, sentiment in candidates[:max_labels]
-    ) or "UNKNOWN"
+            candidates.append((presence, entry, sentiment))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [
+        {
+            "code": entry[0],
+            "category": entry[1],
+            "subcategory": entry[2],
+            "sentiment": sentiment,
+            "sentiment_name": SENTIMENT_NAMES[sentiment],
+            "confidence": round(presence, 6),
+        }
+        for presence, entry, sentiment in candidates[:max_labels]
+    ]
 
 
-async def predict_answers(app: FastAPI, answers: list[object]) -> list[str]:
+async def predict_answers(
+    app: FastAPI, answers: list[object]
+) -> list[list[dict[str, Any]]]:
     codebook = app.state.codebook
     config = app.state.config
-    results = ["UNKNOWN"] * len(answers)
+    results: list[list[dict[str, Any]]] = [[] for _ in answers]
     rows_per_group = max(1, PAIR_BATCH_SIZE // len(codebook))
     prefix = text(config.get("after_semicolon_prefix", ""))
 
@@ -144,7 +153,7 @@ async def predict_answers(app: FastAPI, answers: list[object]) -> list[str]:
             answer = add_prefix(answer, prefix)
             if answer:
                 active_rows.append(row)
-                pairs.extend((answer, description) for _, description in codebook)
+                pairs.extend((answer, entry[3]) for entry in codebook)
 
         probabilities: list[list[float]] = []
         for offset in range(0, len(pairs), PAIR_BATCH_SIZE):
@@ -183,7 +192,6 @@ async def lifespan(app: FastAPI):
     app.state.codebook = codebook
     app.state.tokenizer = tokenizer
     app.state.config = config
-    app.state.codebook_bytes = CODEBOOK_PATH.read_bytes()
     app.state.lock = asyncio.Lock()
     try:
         yield
@@ -195,45 +203,18 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)) -> Response:
-    filename = file.filename or "responses.xlsx"
-    if Path(filename).suffix.lower() != ".xlsx":
-        raise HTTPException(400, "Only .xlsx files are accepted")
-
+async def predict(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    missing = [index for index, record in enumerate(records) if "RESPONSE" not in record]
+    if missing:
+        raise HTTPException(422, f"RESPONSE is missing in items: {missing}")
     try:
-        workbook = load_workbook(io.BytesIO(await file.read()))
-        sheet = workbook[SHEET_NAME] if SHEET_NAME else workbook.active
-        headers = {text(cell.value): index for index, cell in enumerate(sheet[1], 1)}
-        if TEXT_COLUMN not in headers:
-            raise ValueError(f"Column {TEXT_COLUMN!r} not found")
-        output_column = headers.get(OUTPUT_COLUMN, sheet.max_column + 1)
-        sheet.cell(1, output_column, OUTPUT_COLUMN)
-        answers = [
-            sheet.cell(row, headers[TEXT_COLUMN]).value
-            for row in range(2, sheet.max_row + 1)
-        ]
         async with app.state.lock:
-            predictions = await predict_answers(app, answers)
-        for row, prediction in enumerate(predictions, 2):
-            sheet.cell(row, output_column, prediction)
-
-        result = io.BytesIO()
-        workbook.save(result)
-        workbook.close()
-        stem = re.sub(r"[^\w.-]+", "_", Path(filename).stem).strip("._") or "result"
-        result_name = f"{stem}_predictions.xlsx"
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as output:
-            output.writestr(result_name, result.getvalue())
-            output.writestr("codebook.xlsx", app.state.codebook_bytes)
-    except (ValueError, KeyError, zipfile.BadZipFile) as exc:
-        raise HTTPException(400, str(exc)) from exc
+            predictions = await predict_answers(
+                app, [record["RESPONSE"] for record in records]
+            )
     except (httpx.HTTPError, RuntimeError) as exc:
         raise HTTPException(502, str(exc)) from exc
-
-    name = quote(f"{Path(result_name).stem}.zip")
-    return Response(
-        archive.getvalue(),
-        media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{name}"},
-    )
+    return [
+        {**record, "PREDICTIONS": prediction}
+        for record, prediction in zip(records, predictions, strict=True)
+    ]
