@@ -27,7 +27,13 @@ VLLM_API_KEY = str(SETTINGS.get("vllm_api_key") or "").strip()
 SERVED_MODEL_NAME = str(SETTINGS.get("served_model_name") or "").strip()
 PAIR_BATCH_SIZE = int(SETTINGS.get("pair_batch_size", 512))
 REQUEST_TIMEOUT = float(SETTINGS.get("request_timeout", 600))
-CODEBOOK_PATH = APP_ROOT / SETTINGS.get("codebook_path", "artifacts/codebook.csv")
+DEFAULT_CODEBOOK = str(SETTINGS.get("default_codebook", "default"))
+CODEBOOK_PATHS = {
+    str(name): APP_ROOT / path
+    for name, path in SETTINGS.get(
+        "codebooks", {"default": "artifacts/codebook.csv"}
+    ).items()
+}
 TOKENIZER_PATH = APP_ROOT / SETTINGS.get("tokenizer_path", "artifacts/tokenizer.json")
 CONFIG_PATH = APP_ROOT / SETTINGS.get(
     "classifier_config_path", "artifacts/classifier_config.json"
@@ -39,15 +45,10 @@ def text(value: object) -> str:
     return "" if value is None else str(value).strip()
 
 
-def load_assets() -> tuple[
-    list[tuple[str, str, str, str]], Tokenizer, dict[str, object]
-]:
-    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    description_format = config.get(
-        "code_description_format", "category_subcategory_v2"
-    )
-
-    source = CODEBOOK_PATH.read_text(encoding="utf-8-sig")
+def load_codebook(
+    path: Path, description_format: object
+) -> list[tuple[str, str, str, str]]:
+    source = path.read_text(encoding="utf-8-sig")
     try:
         delimiter = csv.Sniffer().sniff(source[:4096], delimiters=",;\t").delimiter
     except csv.Error:
@@ -74,14 +75,30 @@ def load_assets() -> tuple[
             description = f"{code}. {description}"
         codebook.append((code, category, subcategory, description))
     if not codebook:
-        raise ValueError("Codebook is empty")
+        raise ValueError(f"Codebook is empty: {path}")
+    return codebook
+
+
+def load_assets() -> tuple[
+    dict[str, list[tuple[str, str, str, str]]], Tokenizer, dict[str, object]
+]:
+    config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    description_format = config.get(
+        "code_description_format", "category_subcategory_v2"
+    )
+    if not CODEBOOK_PATHS or DEFAULT_CODEBOOK not in CODEBOOK_PATHS:
+        raise ValueError("default_codebook must exist in codebooks")
+    codebooks = {
+        name: load_codebook(path, description_format)
+        for name, path in CODEBOOK_PATHS.items()
+    }
 
     tokenizer = Tokenizer.from_file(str(TOKENIZER_PATH))
     tokenizer.no_padding()
     tokenizer.enable_truncation(
         max_length=int(config.get("max_length", 256)), strategy="longest_first"
     )
-    return codebook, tokenizer, config
+    return codebooks, tokenizer, config
 
 
 def add_prefix(value: object, prefix: str) -> str:
@@ -138,9 +155,10 @@ def decode(
 
 
 async def predict_answers(
-    app: FastAPI, answers: list[object]
+    app: FastAPI,
+    answers: list[object],
+    codebook: list[tuple[str, str, str, str]],
 ) -> list[list[dict[str, Any]]]:
-    codebook = app.state.codebook
     config = app.state.config
     results: list[list[dict[str, Any]]] = [[] for _ in answers]
     rows_per_group = max(1, PAIR_BATCH_SIZE // len(codebook))
@@ -177,7 +195,7 @@ async def predict_answers(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    codebook, tokenizer, config = load_assets()
+    codebooks, tokenizer, config = load_assets()
     headers = {"Authorization": f"Bearer {VLLM_API_KEY}"} if VLLM_API_KEY else {}
     client = httpx.AsyncClient(headers=headers, timeout=REQUEST_TIMEOUT)
     response = await client.get(f"{VLLM_URL}/v1/models")
@@ -189,7 +207,7 @@ async def lifespan(app: FastAPI):
 
     app.state.client = client
     app.state.model = model
-    app.state.codebook = codebook
+    app.state.codebooks = codebooks
     app.state.tokenizer = tokenizer
     app.state.config = config
     app.state.lock = asyncio.Lock()
@@ -203,14 +221,22 @@ app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
 
 
 @app.post("/predict")
-async def predict(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def predict(
+    records: list[dict[str, Any]], codebook: str | None = None
+) -> list[dict[str, Any]]:
+    codebook_name = codebook or DEFAULT_CODEBOOK
+    selected_codebook = app.state.codebooks.get(codebook_name)
+    if selected_codebook is None:
+        raise HTTPException(404, f"Unknown codebook: {codebook_name}")
     missing = [index for index, record in enumerate(records) if "RESPONSE" not in record]
     if missing:
         raise HTTPException(422, f"RESPONSE is missing in items: {missing}")
     try:
         async with app.state.lock:
             predictions = await predict_answers(
-                app, [record["RESPONSE"] for record in records]
+                app,
+                [record["RESPONSE"] for record in records],
+                selected_codebook,
             )
     except (httpx.HTTPError, RuntimeError) as exc:
         raise HTTPException(502, str(exc)) from exc
