@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import random
 import re
@@ -294,7 +295,22 @@ def read_table(path: str | Path, csv_sep: str | None = None) -> pd.DataFrame:
             engine="python" if csv_sep is None else "c",
             encoding="utf-8-sig",
         )
-    raise ValueError("Input file must be .xlsx, .xlsm or .csv.")
+    if source_path.suffix.lower() == ".json":
+        records = json.loads(source_path.read_text(encoding="utf-8-sig"))
+        if not isinstance(records, list):
+            raise ValueError("JSON input must contain a top-level list of objects.")
+        if any(not isinstance(record, dict) for record in records):
+            raise ValueError("Every item in the JSON list must be an object.")
+        if records:
+            expected_keys = set(records[0])
+            for index, record in enumerate(records[1:], start=1):
+                if set(record) != expected_keys:
+                    raise ValueError(
+                        "JSON objects must have the same keys; "
+                        f"item {index} has different keys."
+                    )
+        return pd.DataFrame.from_records(records)
+    raise ValueError("Input file must be .xlsx, .xlsm, .csv or .json.")
 
 
 def write_table(frame: pd.DataFrame, path: str | Path) -> Path:

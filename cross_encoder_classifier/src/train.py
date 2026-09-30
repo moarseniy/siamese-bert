@@ -672,7 +672,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Fine-tune a pairwise transformer for code presence and sentiment."
     )
     parser.add_argument(
-        "--train", required=True, type=Path, help="CSV/XLSX with labels."
+        "--train", required=True, type=Path, help="CSV/XLSX/JSON with labels."
     )
     parser.add_argument("--codebook", required=True, type=Path, help="Codebook CSV.")
     parser.add_argument("--out-dir", required=True, type=Path)
